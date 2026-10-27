@@ -3,6 +3,37 @@
 Stack: Python 3 + `asyncio` + `cryptography`.
 Regra: só avance de etapa quando os testes da anterior passarem.
 Versionamento: cada etapa deve ser concluída em um commit separado, usando o formato Conventional Commits (`<tipo>(<escopo>): <descrição>`), por exemplo `chore(setup): implementa etapa 0`.
+Documentação incremental: cada etapa deve explicar também seu papel na história de Alice e Bruno, como nas etapas 0 e 1 abaixo. Inclua uma seção `Na história` que conecte o que foi implementado às cenas do sistema, explique o que a etapa entrega ao sistema completo e deixe claro o que ainda não faz parte dela.
+
+## O sistema em ação: Alice e Bruno
+
+Suponha que o `client_id` da Alice seja menor que o do Bruno; portanto, Alice é A e Bruno é B.
+
+**Cena 0 — antes de tudo.** O servidor tem `server.key` e `server.crt`. Cada cliente guarda uma cópia somente de `server.crt`.
+
+**Cena 1 — Alice chega.** Ela gera seu par X25519 efêmero e envia `HELLO` com seu `client_id` e sua chave pública.
+
+**Cena 2 — o porteiro se prova.** O servidor gera sua chave X25519 efêmera (`pk_S`) e `salt_srv`, assina o material do handshake com RSA-PSS e envia `SERVER_HELLO` com chave, salt, assinatura e certificado. Alice compara o certificado com o pinado e verifica a assinatura. Se algo falhar, fecha a conexão; se passar, autenticou o servidor.
+
+**Cena 3 — o interfone.** Alice e o servidor calculam `Z_CS` e derivam as chaves administrativas `C2S` e `S2C`. Daqui em diante, confirmações, avisos e erros administrativos trafegam cifrados e numerados. O servidor registra Alice em `sessions`.
+
+**Cena 4 — Bruno chega.** Bruno repete as cenas 1 a 3. O servidor usa o canal administrativo de cada cliente para enviar `PEER_INFO`: cada um recebe a chave pública e o salt associado ao outro.
+
+**Cena 5 — cada um calcula sozinho.** Alice combina sua chave privada com a chave pública de Bruno; Bruno faz o inverso. Ambos chegam ao mesmo `Z_AB`. Como os salts de seus handshakes são diferentes, cada lado calcula `SHA256(salt_do_menor_id ‖ salt_do_maior_id)[:16]`. O HKDF deriva `A2B` e `B2A`: Alice envia com `A2B` e recebe com `B2A`; Bruno faz o inverso. O servidor não participa da derivação E2E.
+
+**Cena 6 — Alice manda “oi”.** Ela monta o nonce (`IV_base ‖ seq`), o AAD e cifra a mensagem com `A2B`. Envia um frame `E2E`. O servidor consulta o `recipient_id` e encaminha os bytes sem alterá-los.
+
+**Cena 7 — Bruno abre.** Ele verifica se o `seq_no` é maior que o último aceito e valida a tag GCM. Se a autenticação passar, decifra a mensagem e atualiza o contador.
+
+**Cena 8 — ataques da demonstração.** No bitflip, a alteração quebra a tag e o frame é rejeitado. No replay, o contador já foi usado e o frame é rejeitado. No framing inválido, o tamanho absurdo ou o frame truncado encerra a conexão afetada com segurança.
+
+**Limitação para a apresentação.** O porteiro poderia trocar as chaves públicas dos peers e se colocar no meio da comunicação. O projeto não impede esse MITM: Alice e Bruno precisam conferir seus fingerprints por um canal confiável.
+
+### Onde entram as etapas 0 e 1
+
+**Etapa 0 — o brasão e a planta do prédio.** `server.key` é a chave privada de assinatura do porteiro e só o servidor deve usá-la. `server.crt` é o certificado público pinado que os clientes conferem na cena 2. O cliente deve carregar apenas o certificado; se acessar a chave privada, o modelo de segurança perde o sentido. A estrutura de pastas organiza a planta: `common/` guarda componentes compartilhados e `server/` e `client/` guardam os componentes de cada lado.
+
+**Etapa 1 — os envelopes padronizados.** TCP é um fluxo contínuo de bytes sem fronteiras de mensagem. O prefixo de quatro bytes informa quantos bytes vêm no frame; o byte de tipo identifica se é `HELLO`, `E2E` ou outro tipo. `MAX_FRAME` limita o tamanho aceito para evitar alocações excessivas com comprimentos maliciosos. Esta etapa entrega o sistema de transporte dos envelopes, sem criptografia. Na história, todas as mensagens passam por `send_frame` e `recv_frame`; sem framing não há troca confiável para as etapas seguintes.
 
 ## Decisões de projeto assumidas
 
@@ -62,6 +93,8 @@ tp3/
 
 **Objetivo:** ambiente pronto e certificado RSA gerado.
 
+**Na história:** é a cena 0, o brasão e a planta do prédio. O certificado público é copiado para os clientes fixarem; a chave privada fica só no servidor para assinar handshakes. A estrutura separa componentes comuns, servidor e cliente.
+
 **Implementar**
 - Criar a estrutura de pastas e o ambiente virtual (`pip install cryptography pytest`).
 - Gerar o certificado autoassinado:
@@ -79,6 +112,8 @@ tp3/
 ## Etapa 1: Framing TCP
 
 **Objetivo:** enviar e receber frames delimitados, com tratamento de erro.
+
+**Na história:** é o correio e seus envelopes padronizados. O prefixo marca o fim de cada carta e o byte de tipo informa que mensagem ela carrega. Esta etapa transporta bytes confiavelmente, mas ainda não cifra nem autentica nada.
 
 **Implementar**
 - `send_frame(writer, type, payload)`: escreve `len(4B BE) | type | payload`.
@@ -99,6 +134,8 @@ tp3/
 ## Etapa 2: Módulo de criptografia
 
 **Objetivo:** funções puras e testadas, sem rede.
+
+**Na história:** prepara as tintas e os lacres que Alice e Bruno usarão depois: X25519/ECDH, HKDF, AES-GCM, nonces, AAD e fingerprints. Sozinha, esta etapa não conecta clientes nem envia mensagens.
 
 **Implementar em `common/crypto.py`**
 - `gen_x25519() -> (sk, pk_raw_32B)`
@@ -124,6 +161,8 @@ tp3/
 
 **Objetivo:** cliente confirma que está falando com o servidor legítimo.
 
+**Na história:** são as cenas 1 e 2. Alice envia `HELLO`; o servidor responde com sua chave efêmera assinada. O cliente valida o certificado pinado e a assinatura antes de confiar no servidor. Aqui ainda não há rendezvous nem mensagens entre peers.
+
 **Implementar**
 - Cliente: gera `client_id = uuid4().bytes`, par X25519, envia `HELLO`.
 - Servidor: gera par efêmero `(sk_S, pk_S)` e `salt_srv` (16B aleatórios), calcula `H = SHA256(pk_S ‖ pk_C ‖ client_id ‖ salt_srv)`, assina diretamente o digest `H` com RSA-PSS (`MGF1(SHA256)`, `Prehashed(SHA256)`, sem hash duplo) e responde `SERVER_HELLO` com o certificado em DER.
@@ -143,6 +182,8 @@ tp3/
 ## Etapa 4: Canal administrativo e tabela `sessions`
 
 **Objetivo:** mensagens do servidor com confidencialidade, integridade e anti-replay.
+
+**Na história:** é a cena 3, o interfone privado entre Alice e o servidor. Eles derivam `C2S` e `S2C`, protegem mensagens administrativas com AES-GCM e registram a sessão. Esse canal não é o canal E2E entre Alice e Bruno.
 
 **Implementar**
 - Os dois lados calculam `Z_CS = ECDH(sk_S, pk_C)` / `ECDH(sk_C, pk_S)`.
@@ -167,6 +208,8 @@ tp3/
 
 **Objetivo:** todos os clientes conhecem as `pk` dos outros.
 
+**Na história:** é a cena 4. Quando Bruno chega, o servidor avisa ambos pelo interfone e entrega a cada um a chave pública e o salt do outro. O servidor distribui esses dados, mas ainda não deriva as chaves E2E.
+
 **Implementar**
 - Ao registrar um cliente novo, o servidor envia `PEER_INFO` para ele, uma vez por cliente já conectado (`client_id | pk | salt` do outro).
 - O servidor também envia `PEER_INFO` do novo para todos os já conectados.
@@ -185,6 +228,8 @@ tp3/
 ## Etapa 6: Derivação das chaves E2E (tabela `peers`)
 
 **Objetivo:** A e B chegam nas mesmas chaves sem o servidor participar.
+
+**Na história:** é a cena 5. Alice e Bruno calculam `Z_AB` localmente e derivam `A2B` e `B2A` com o mesmo salt de par ordenado pelos IDs. A partir daqui cada cliente mantém suas chaves e contadores por peer; o servidor não conhece essas chaves.
 
 **Implementar**
 - Ao receber `PEER_INFO`, o cliente calcula `Z = ECDH(sk_self, pk_peer)`.
@@ -206,6 +251,8 @@ tp3/
 
 **Objetivo:** A manda para B, o servidor só repassa.
 
+**Na história:** são as cenas 6 e 7. Alice cifra “oi”, inclui nonce, IDs e sequência no frame, e o servidor o encaminha ao Bruno sem alterar os bytes. Bruno valida remetente, sequência e tag antes de decifrar.
+
 **Implementar**
 - Cliente: monta nonce = `IV_base_send ‖ seq_send`, AAD = `sender ‖ recipient ‖ seq`, cifra com `key_send`, envia o frame `0x05`, depois incrementa `seq_send`.
 - Servidor: lê só os 16 bytes de `recipient_id` (offset 28 a 44 do payload), procura em `sessions` e reenvia o frame **inalterado** ao `writer` do destinatário. Se o destinatário não existe, responde `ERROR` (administrativo).
@@ -226,6 +273,8 @@ tp3/
 ## Etapa 8: Ataques e rejeições (os 4 testes obrigatórios)
 
 **Objetivo:** demonstrar proteção contra adulteração e replay.
+
+**Na história:** é a cena 8. A demo mostra que bitflip quebra a tag, replay é barrado pelo contador e framing inválido encerra a conexão afetada. Esta etapa demonstra as rejeições e a recuperação, sem introduzir um novo mecanismo criptográfico.
 
 **Implementar**
 - Anti-replay: se `seq_no <= seq_recv`, rejeitar. Só atualizar `seq_recv` **depois** da tag válida.
@@ -250,6 +299,8 @@ Verificações extras:
 ## Etapa 9: Reconexão, logs, documentação e demo
 
 **Objetivo:** fechar os requisitos operacionais e a apresentação.
+
+**Na história:** prepara a apresentação completa: reconexões criam sessões e chaves novas; logs evitam expor segredos; documentação e demo ajudam a explicar as cenas e a limitação de MITM entre peers.
 
 **Implementar**
 - Reconexão com o mesmo `client_id`: handshake completo, novo par efêmero, novo salt, contadores zerados. Se o ID ainda tiver uma conexão ativa, o servidor invalida/fecha a conexão antiga antes de instalar a nova sessão, para não manter duas conexões válidas com a mesma identidade.
