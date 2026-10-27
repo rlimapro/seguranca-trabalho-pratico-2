@@ -1,0 +1,8 @@
+# Python virtual environments and caches
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Private signing key
+certs/server.key
