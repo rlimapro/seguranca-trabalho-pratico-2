@@ -1,7 +1,7 @@
 # TP3: Mensageria Segura E2E — Plano Incremental
 
 Stack: Python 3 + `asyncio` + `cryptography`.
-Regra: só avance de etapa quando os testes da anterior passarem.
+Testes por etapa: cada etapa deve ter sua própria suíte de testes, cobrindo seus critérios de aceite. Uma etapa só é aprovada quando todos os testes da sua suíte passam; não avance para a etapa seguinte enquanto houver teste falhando ou critério de aceite sem cobertura/verificação.
 Versionamento: cada etapa deve ser concluída em um commit separado, usando o formato Conventional Commits (`<tipo>(<escopo>): <descrição>`), por exemplo `chore(setup): implementa etapa 0`.
 Documentação incremental: cada etapa deve explicar também seu papel na história de Alice e Bruno, como nas etapas 0 e 1 abaixo. Inclua uma seção `Na história` que conecte o que foi implementado às cenas do sistema, explique o que a etapa entrega ao sistema completo e deixe claro o que ainda não faz parte dela.
 
