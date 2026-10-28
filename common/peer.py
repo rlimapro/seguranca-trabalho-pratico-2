@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
@@ -22,6 +23,7 @@ class PeerSession:
     seq_recv: int = -1
     iv_base_send: bytes = b""
     iv_base_recv: bytes | None = None
+    send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
 def derive_peer_session(

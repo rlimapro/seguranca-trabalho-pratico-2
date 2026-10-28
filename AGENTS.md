@@ -247,7 +247,7 @@ tp3/
 
 ---
 
-## [ ] Etapa 7: Mensagem E2E e relay
+## [x] Etapa 7: Mensagem E2E e relay
 
 **Objetivo:** A manda para B, o servidor só repassa.
 

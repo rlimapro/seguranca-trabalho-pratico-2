@@ -17,12 +17,14 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
-from common.admin import AdminChannel
+from common.admin import ADMIN_TYPES, AdminChannel
 from common.crypto import ecdh, fingerprint, gen_x25519, hkdf_extract_expand
+from common.e2e import receive_e2e, send_e2e
 from common.framing import FrameError, recv_frame, send_frame
 from common.peer import PeerSession, derive_peer_session
 from common.protocol import (
     ERROR,
+    E2E,
     HELLO,
     PEER_INFO,
     PEER_LEFT,
@@ -96,6 +98,40 @@ def apply_peer_event(
     if message_type == ERROR:
         return None
     raise ValueError(f"unexpected administrative message 0x{message_type:02x}")
+
+
+def resolve_peer_prefix(prefix: str, peer_ids: set[bytes]) -> bytes:
+    """Resolve a UUID, UUID prefix, or hex prefix to one known peer ID."""
+    normalized = prefix.strip().lower().replace("-", "")
+    if not normalized:
+        raise ValueError("informe o ID ou prefixo do destinatário")
+    matches = [peer_id for peer_id in peer_ids if peer_id.hex().startswith(normalized)]
+    if not matches:
+        raise ValueError("nenhum peer corresponde a esse ID")
+    if len(matches) > 1:
+        raise ValueError("prefixo ambíguo; informe mais caracteres do ID")
+    return matches[0]
+
+
+async def send_to_peer(
+    handshake: ClientHandshake,
+    admin: AdminClientConnection,
+    command: str,
+) -> tuple[bytes, int, bytes]:
+    """Parse ``/to <id-or-prefix> <message>`` and send it E2E."""
+    parts = command.split(maxsplit=2)
+    if len(parts) != 3 or parts[0] != "/to":
+        raise ValueError("uso: /to <id_ou_prefixo> mensagem")
+    peer_id = resolve_peer_prefix(parts[1], set(admin.peers))
+    payload = await send_e2e(
+        handshake.writer,
+        handshake.client_id,
+        peer_id,
+        admin.peers[peer_id],
+        parts[2].encode("utf-8"),
+    )
+    seq = int.from_bytes(payload[44:52], "big")
+    return peer_id, seq, payload
 
 
 def certificate_to_der(certificate_bytes: bytes) -> bytes:
@@ -258,9 +294,37 @@ async def _run_cli(host: str, port: int, pin_path: str) -> None:
         f"client_id={uuid.UUID(bytes=handshake.client_id)}; "
         f"confirmação={admin.confirmation.decode('utf-8', errors='replace')}"
     )
+    receiver = asyncio.create_task(_receive_messages(handshake, admin))
     try:
-        while True:
-            message_type, plaintext, _seq = await admin.channel.recv_admin()
+        while not receiver.done():
+            try:
+                command = await asyncio.to_thread(input, "tp3> ")
+            except EOFError:
+                break
+            try:
+                peer_id, seq, _payload = await send_to_peer(handshake, admin, command)
+                print(f"Mensagem enviada para {uuid.UUID(bytes=peer_id)} (seq={seq})")
+            except (ValueError, UnicodeError) as exc:
+                print(f"Comando recusado: {exc}")
+    finally:
+        handshake.writer.close()
+        await handshake.writer.wait_closed()
+        if not receiver.done():
+            receiver.cancel()
+        await asyncio.gather(receiver, return_exceptions=True)
+
+
+async def _receive_messages(
+    handshake: ClientHandshake, admin: AdminClientConnection
+) -> None:
+    """Read and dispatch administrative and E2E frames from the server."""
+    while True:
+        message_type, payload = await recv_frame(handshake.reader)
+        if message_type in ADMIN_TYPES:
+            message_type, plaintext, _seq = admin.channel.decode_admin_frame(message_type, payload)
+            if message_type == ERROR:
+                print(f"Aviso do servidor: {plaintext.decode('utf-8', errors='replace')}")
+                continue
             event = apply_peer_event(
                 handshake,
                 admin.known_peers,
@@ -277,9 +341,12 @@ async def _run_cli(host: str, port: int, pin_path: str) -> None:
                         f"Peer: {uuid.UUID(bytes=peer_id)} fingerprint={detail}; "
                         "chaves E2E derivadas"
                     )
-    finally:
-        handshake.writer.close()
-        await handshake.writer.wait_closed()
+        elif message_type == E2E:
+            sender_id, plaintext = receive_e2e(handshake.client_id, admin.peers, payload)
+            message = plaintext.decode("utf-8", errors="replace")
+            print(f"Mensagem de {uuid.UUID(bytes=sender_id)}: {message}")
+        else:
+            raise FrameError(f"tipo de frame inesperado: 0x{message_type:02x}")
 
 
 def main() -> None:

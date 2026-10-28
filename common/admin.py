@@ -88,20 +88,27 @@ class AdminChannel:
         """Receive and authenticate an admin frame before advancing its counter."""
         async with self._recv_lock:
             message_type, payload = await recv_frame(self.reader)
-            if message_type not in ADMIN_TYPES:
-                raise AdminProtocolError(f"type 0x{message_type:02x} is not administrative")
-            if len(payload) < _SEQ_LENGTH + _TAG_LENGTH:
-                raise AdminProtocolError("administrative payload is truncated")
+            return self.decode_admin_frame(message_type, payload)
 
-            seq = int.from_bytes(payload[:_SEQ_LENGTH], "big")
-            if seq <= self.seq_recv:
-                raise AdminReplayError(f"administrative replay: seq={seq}")
+    def decode_admin_frame(self, message_type: int, payload: bytes) -> tuple[int, bytes, int]:
+        """Authenticate an already framed administrative payload.
 
-            ciphertext = payload[_SEQ_LENGTH:]
-            nonce = build_nonce(self.direction_recv, seq)
-            aad = build_aad_admin(message_type, seq)
-            # InvalidTag propagates. Crucially, seq_recv changes only after
-            # successful authentication and decryption.
-            plaintext = aes_decrypt(self.key_recv, nonce, aad, ciphertext)
-            self.sequence_state["seq_recv"] = seq
-            return message_type, plaintext, seq
+        This lets a client multiplex administrative and E2E frames while still
+        using the same sequence state and validation rules as ``recv_admin``.
+        """
+        if message_type not in ADMIN_TYPES:
+            raise AdminProtocolError(f"type 0x{message_type:02x} is not administrative")
+        if len(payload) < _SEQ_LENGTH + _TAG_LENGTH:
+            raise AdminProtocolError("administrative payload is truncated")
+
+        seq = int.from_bytes(payload[:_SEQ_LENGTH], "big")
+        if seq <= self.seq_recv:
+            raise AdminReplayError(f"administrative replay: seq={seq}")
+
+        ciphertext = payload[_SEQ_LENGTH:]
+        nonce = build_nonce(self.direction_recv, seq)
+        aad = build_aad_admin(message_type, seq)
+        # Advance only after GCM authentication succeeds.
+        plaintext = aes_decrypt(self.key_recv, nonce, aad, ciphertext)
+        self.sequence_state["seq_recv"] = seq
+        return message_type, plaintext, seq

@@ -3,7 +3,7 @@
 Implementação incremental em Python, `asyncio` e `cryptography`. O plano completo
 e as decisões de protocolo estão em [`AGENTS.md`](AGENTS.md).
 
-## Etapas 0–6
+## Etapas 0–7
 
 As etapas 0–4 preparam o certificado pinado, framing TCP, primitivas
 criptográficas, handshake autenticado e canal administrativo cifrado. A etapa 5
@@ -12,7 +12,10 @@ adiciona o rendezvous: o servidor anuncia entradas e saídas, distribuindo
 autenticados por AES-GCM. O cliente guarda esses dados em `known_peers` e mostra
 o fingerprint `SHA256(pk)[:8]` para conferência manual. Na etapa 6, cada cliente
 usa sua chave privada X25519 e a chave pública recebida para derivar localmente
-as chaves direcionais E2E; o servidor não as recebe.
+as chaves direcionais E2E; o servidor não as recebe. A etapa 7 acrescenta o
+envio de mensagens com `/to <id_ou_prefixo> mensagem`: o cliente cifra com
+AES-GCM, e o servidor encaminha o frame sem abrir ou alterar seu conteúdo. O
+remetente limita o plaintext a 4096 bytes.
 
 ### Na história
 
@@ -25,6 +28,15 @@ entrega as chaves locais necessárias para mensagens E2E, mas ainda não envia
 essas mensagens. A autenticação entre peers também não existe: Alice e Bruno
 precisam comparar fingerprints por um canal confiável para detectar uma troca
 maliciosa de chaves pelo servidor.
+
+### Na história — etapa 7
+
+São as cenas 6 e 7: Alice cifra a mensagem com a chave `A2B`, incluindo nonce,
+IDs e sequência; o servidor encaminha o frame para Bruno pelo `recipient_id`.
+Bruno valida o destinatário e o remetente, autentica e decifra antes de avançar
+seu contador. O limite de 4096 bytes mantém cada mensagem dentro do tamanho
+aceito pelo framing. A etapa entrega troca E2E em texto, mas ainda não inclui a
+demonstração dos ataques de bitflip e replay, que pertence à etapa 8.
 
 ## Como executar
 
@@ -43,7 +55,9 @@ python -m client.client --host 127.0.0.1 --port 8766 --pin client/certs/server.c
 
 O cliente permanece conectado e imprime o ID e fingerprint de cada peer que
 entrar, junto da confirmação de que as chaves E2E foram derivadas localmente.
-`Ctrl-C` encerra a conexão; os demais clientes recebem `PEER_LEFT`.
+Envie mensagens com `/to <id_ou_prefixo> mensagem`; prefixos ambíguos ou sem
+correspondência são recusados. `Ctrl-C` encerra a conexão; os demais clientes
+recebem `PEER_LEFT`.
 
 ## Verificação
 

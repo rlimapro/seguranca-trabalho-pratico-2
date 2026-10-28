@@ -21,6 +21,7 @@ from common.admin import AdminChannel
 from common.crypto import ecdh, hkdf_extract_expand
 from common.framing import FrameError, recv_frame, send_frame
 from common.protocol import (
+    E2E,
     ERROR,
     HELLO,
     PEER_INFO,
@@ -36,6 +37,31 @@ from common.protocol import (
 logger = logging.getLogger("tp3.handshake_server")
 sessions: dict[bytes, dict] = {}
 sessions_lock = asyncio.Lock()
+_E2E_HEADER_LENGTH = 12 + 16 + 16 + 8
+_E2E_TAG_LENGTH = 16
+
+
+async def relay_e2e_frame(
+    sender_id: bytes,
+    payload: bytes,
+    sender_admin: AdminChannel,
+    session_store: dict[bytes, dict],
+    session_lock: asyncio.Lock,
+) -> bool:
+    """Forward an opaque E2E payload to its addressed recipient unchanged."""
+    if len(payload) < _E2E_HEADER_LENGTH + _E2E_TAG_LENGTH:
+        raise FrameError("E2E payload is truncated")
+    if payload[12:28] != sender_id:
+        raise FrameError("E2E sender ID does not match the authenticated session")
+
+    recipient_id = payload[28:44]
+    async with session_lock:
+        recipient = session_store.get(recipient_id)
+        if recipient is None:
+            await sender_admin.send_admin(ERROR, "Destinatário indisponível".encode("utf-8"))
+            return False
+        await send_frame(recipient["writer"], E2E, payload)
+    return True
 
 
 class HandshakeError(ValueError):
@@ -203,7 +229,17 @@ async def handle_handshake_client(
                         session["salt"],
                     ),
                 )
-        await reader.read()
+        while True:
+            message_type, payload = await recv_frame(reader)
+            if message_type != E2E:
+                raise FrameError(f"unexpected client frame type 0x{message_type:02x}")
+            await relay_e2e_frame(
+                handshake_client_id,
+                payload,
+                admin,
+                active_sessions,
+                active_lock,
+            )
     except (IncompleteReadError, FrameError, HandshakeError, InvalidKey, OSError) as exc:
         logger.info("handshake rejeitado (%s): peer=%s", exc, peer)
     except (TypeError, ValueError) as exc:

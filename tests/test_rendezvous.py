@@ -6,8 +6,15 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from client.client import apply_peer_event, establish_admin_channel, perform_client_handshake
-from common.protocol import PEER_INFO, PEER_LEFT
+from client.client import (
+    apply_peer_event,
+    establish_admin_channel,
+    perform_client_handshake,
+    send_to_peer,
+)
+from common.e2e import E2EProtocolError, MAX_PLAINTEXT, receive_e2e, send_e2e
+from common.framing import recv_frame, send_frame
+from common.protocol import E2E, ERROR
 from server.handshake_server import handle_handshake_client
 
 
@@ -115,6 +122,62 @@ class RendezvousTests(unittest.IsolatedAsyncioTestCase):
         for handshake, admin, *_ in self.clients:
             self.assertNotIn(handshake.client_id, admin.known_peers)
             self.assertNotIn(handshake.client_id, admin.peers)
+
+        first_peer = first_admin.peers[second_hs.client_id]
+        resolved_peer, sent_seq, sent_payload = await send_to_peer(
+            first_hs,
+            first_admin,
+            f"/to {second_hs.client_id.hex()[:8]} oi, Bruno",
+        )
+        self.assertEqual((resolved_peer, sent_seq), (second_hs.client_id, 0))
+        frame_type, received_payload = await recv_frame(second_hs.reader)
+        self.assertEqual(frame_type, E2E)
+        self.assertEqual(received_payload, sent_payload)  # relay preserves the bytes
+        self.assertEqual(
+            receive_e2e(second_hs.client_id, second_admin.peers, received_payload),
+            (first_hs.client_id, "oi, Bruno".encode("utf-8")),
+        )
+
+        second_peer = second_admin.peers[first_hs.client_id]
+        for message in (b"resposta", b"segunda mensagem"):
+            await send_e2e(
+                second_hs.writer,
+                second_hs.client_id,
+                first_hs.client_id,
+                second_peer,
+                message,
+            )
+            frame_type, received_payload = await recv_frame(first_hs.reader)
+            self.assertEqual(frame_type, E2E)
+            self.assertEqual(
+                receive_e2e(first_hs.client_id, first_admin.peers, received_payload),
+                (second_hs.client_id, message),
+            )
+        self.assertEqual(third_hs.reader._buffer, b"")
+
+        missing_recipient = b"Z" * 16
+        opaque_payload = (
+            b"N" * 12
+            + first_hs.client_id
+            + missing_recipient
+            + (0).to_bytes(8, "big")
+            + b"T" * 16
+        )
+        await send_frame(first_hs.writer, E2E, opaque_payload)
+        message_type, admin_payload = await recv_frame(first_hs.reader)
+        self.assertEqual(message_type, ERROR)
+        _, error_text, _ = first_admin.channel.decode_admin_frame(message_type, admin_payload)
+        self.assertEqual(error_text.decode("utf-8"), "Destinatário indisponível")
+
+        with self.assertRaises(E2EProtocolError):
+            await send_e2e(
+                first_hs.writer,
+                first_hs.client_id,
+                second_hs.client_id,
+                first_peer,
+                b"x" * (MAX_PLAINTEXT + 1),
+            )
+        self.assertEqual(first_peer.seq_send, 1)
 
         third[2].close()
         await third[3]
