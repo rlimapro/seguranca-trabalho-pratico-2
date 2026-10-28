@@ -23,9 +23,13 @@ from common.framing import FrameError, recv_frame, send_frame
 from common.protocol import (
     ERROR,
     HELLO,
+    PEER_INFO,
+    PEER_LEFT,
     SERVER_HELLO,
     decode_hello,
     encode_server_hello,
+    encode_peer_info,
+    encode_peer_left,
     handshake_digest,
 )
 
@@ -172,16 +176,33 @@ async def handle_handshake_client(
             sequence_state=session,
         )
         session["admin"] = admin
-        async with active_lock:
-            active_sessions[handshake_client_id] = session
-
-        logger.info("handshake autenticado: client_id=%s peer=%s", handshake_client_id.hex(), peer)
         # The server ephemeral private key is no longer needed after deriving
         # the administrative keys; keep only the connection state and keys.
         server_handshake = None
-        await admin.send_admin(ERROR, b"Registro confirmado")
-        # The administrative receive path is available through AdminChannel;
-        # this stage has no client-originated admin messages yet.
+        async with active_lock:
+            active_sessions[handshake_client_id] = session
+            logger.info("handshake autenticado: client_id=%s peer=%s", handshake_client_id.hex(), peer)
+            # Keep registration and initial sends atomic with respect to other
+            # arrivals so the registration confirmation is always seq 0.
+            await admin.send_admin(ERROR, b"Registro confirmado")
+            # The new client learns about each existing session, and each
+            # existing client learns about the new one. AdminChannel serializes
+            # sequence allocation and writes for each connection.
+            for peer_id, peer_session in tuple(active_sessions.items()):
+                if peer_id == handshake_client_id:
+                    continue
+                await admin.send_admin(
+                    PEER_INFO,
+                    encode_peer_info(peer_id, peer_session["public_key"], peer_session["salt"]),
+                )
+                await peer_session["admin"].send_admin(
+                    PEER_INFO,
+                    encode_peer_info(
+                        handshake_client_id,
+                        session["public_key"],
+                        session["salt"],
+                    ),
+                )
         await reader.read()
     except (IncompleteReadError, FrameError, HandshakeError, InvalidKey, OSError) as exc:
         logger.info("handshake rejeitado (%s): peer=%s", exc, peer)
@@ -198,6 +219,13 @@ async def handle_handshake_client(
                 current = active_sessions.get(handshake_client_id)
                 if current is session:
                     active_sessions.pop(handshake_client_id, None)
+                    for peer_id, peer_session in tuple(active_sessions.items()):
+                        try:
+                            await peer_session["admin"].send_admin(
+                                PEER_LEFT, encode_peer_left(handshake_client_id)
+                            )
+                        except (ConnectionError, OSError):
+                            logger.info("falha ao notificar saída: client_id=%s", peer_id.hex())
 
 
 async def serve(

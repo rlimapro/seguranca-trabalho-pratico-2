@@ -105,6 +105,36 @@ def handshake_digest(
     return hashlib.sha256(pk_server + pk_client + client_id + salt_srv).digest()
 
 
+def encode_peer_info(client_id: bytes, public_key: bytes, salt_srv: bytes) -> bytes:
+    """Encode the fixed-size rendezvous payload: id | X25519 key | salt."""
+    _require_length("client_id", client_id, CLIENT_ID_LENGTH)
+    _require_length("public_key", public_key, X25519_PUBLIC_KEY_LENGTH)
+    _require_length("salt_srv", salt_srv, SERVER_SALT_LENGTH)
+    return client_id + public_key + salt_srv
+
+
+def decode_peer_info(payload: bytes) -> tuple[bytes, bytes, bytes]:
+    """Decode a PEER_INFO plaintext, requiring its exact 64-byte size."""
+    if not isinstance(payload, bytes):
+        raise TypeError("PEER_INFO payload must be bytes")
+    expected = CLIENT_ID_LENGTH + X25519_PUBLIC_KEY_LENGTH + SERVER_SALT_LENGTH
+    if len(payload) != expected:
+        raise ValueError(f"PEER_INFO payload must be exactly {expected} bytes")
+    return payload[:16], payload[16:48], payload[48:]
+
+
+def encode_peer_left(client_id: bytes) -> bytes:
+    """Encode a PEER_LEFT plaintext containing one client identifier."""
+    _require_length("client_id", client_id, CLIENT_ID_LENGTH)
+    return client_id
+
+
+def decode_peer_left(payload: bytes) -> bytes:
+    """Decode a PEER_LEFT plaintext, requiring an exact 16-byte ID."""
+    _require_length("client_id", payload, CLIENT_ID_LENGTH)
+    return payload
+
+
 def _require_length(name: str, value: bytes, expected: int) -> None:
     _require_bytes(name, value)
     if len(value) != expected:

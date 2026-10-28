@@ -18,12 +18,16 @@ from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from common.admin import AdminChannel
-from common.crypto import ecdh, gen_x25519, hkdf_extract_expand
+from common.crypto import ecdh, fingerprint, gen_x25519, hkdf_extract_expand
 from common.framing import FrameError, recv_frame, send_frame
 from common.protocol import (
     ERROR,
     HELLO,
+    PEER_INFO,
+    PEER_LEFT,
     SERVER_HELLO,
+    decode_peer_info,
+    decode_peer_left,
     decode_server_hello,
     encode_hello,
     handshake_digest,
@@ -56,6 +60,24 @@ class AdminClientConnection:
 
     channel: AdminChannel
     confirmation: bytes
+    known_peers: dict[bytes, tuple[bytes, bytes]]
+
+
+def apply_peer_event(
+    known_peers: dict[bytes, tuple[bytes, bytes]], message_type: int, plaintext: bytes
+) -> tuple[bytes, str] | None:
+    """Update the known-peers table and return a displayable event."""
+    if message_type == PEER_INFO:
+        peer_id, public_key, salt = decode_peer_info(plaintext)
+        known_peers[peer_id] = (public_key, salt)
+        return peer_id, fingerprint(public_key)
+    if message_type == PEER_LEFT:
+        peer_id = decode_peer_left(plaintext)
+        known_peers.pop(peer_id, None)
+        return peer_id, "left"
+    if message_type == ERROR:
+        return None
+    raise ValueError(f"unexpected administrative message 0x{message_type:02x}")
 
 
 def certificate_to_der(certificate_bytes: bytes) -> bytes:
@@ -198,7 +220,7 @@ async def establish_admin_channel(handshake: ClientHandshake) -> AdminClientConn
         message_type, plaintext, _seq = await channel.recv_admin()
         if message_type != ERROR:
             raise HandshakeError("server did not send the registration confirmation")
-        return AdminClientConnection(channel=channel, confirmation=plaintext)
+        return AdminClientConnection(channel=channel, confirmation=plaintext, known_peers={})
     except Exception:
         handshake.writer.close()
         try:
@@ -216,8 +238,19 @@ async def _run_cli(host: str, port: int, pin_path: str) -> None:
         f"client_id={uuid.UUID(bytes=handshake.client_id)}; "
         f"confirmação={admin.confirmation.decode('utf-8', errors='replace')}"
     )
-    handshake.writer.close()
-    await handshake.writer.wait_closed()
+    try:
+        while True:
+            message_type, plaintext, _seq = await admin.channel.recv_admin()
+            event = apply_peer_event(admin.known_peers, message_type, plaintext)
+            if event is not None:
+                peer_id, detail = event
+                if detail == "left":
+                    print(f"Peer saiu: {uuid.UUID(bytes=peer_id)}")
+                else:
+                    print(f"Peer: {uuid.UUID(bytes=peer_id)} fingerprint={detail}")
+    finally:
+        handshake.writer.close()
+        await handshake.writer.wait_closed()
 
 
 def main() -> None:

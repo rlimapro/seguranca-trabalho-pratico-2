@@ -204,7 +204,7 @@ tp3/
 
 ---
 
-## [ ] Etapa 5: Rendezvous (distribuição de chaves públicas)
+## [x] Etapa 5: Rendezvous (distribuição de chaves públicas)
 
 **Objetivo:** todos os clientes conhecem as `pk` dos outros.
 
