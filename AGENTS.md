@@ -89,7 +89,7 @@ tp3/
 
 ---
 
-## Etapa 0: Setup e certificado
+## [x] Etapa 0: Setup e certificado
 
 **Objetivo:** ambiente pronto e certificado RSA gerado.
 
@@ -109,7 +109,7 @@ tp3/
 
 ---
 
-## Etapa 1: Framing TCP
+## [x] Etapa 1: Framing TCP
 
 **Objetivo:** enviar e receber frames delimitados, com tratamento de erro.
 
@@ -131,7 +131,7 @@ tp3/
 
 ---
 
-## Etapa 2: Módulo de criptografia
+## [x] Etapa 2: Módulo de criptografia
 
 **Objetivo:** funções puras e testadas, sem rede.
 
@@ -157,7 +157,7 @@ tp3/
 
 ---
 
-## Etapa 3: Handshake autenticado (cliente ↔ servidor)
+## [x] Etapa 3: Handshake autenticado (cliente ↔ servidor)
 
 **Objetivo:** cliente confirma que está falando com o servidor legítimo.
 
@@ -179,7 +179,7 @@ tp3/
 
 ---
 
-## Etapa 4: Canal administrativo e tabela `sessions`
+## [x] Etapa 4: Canal administrativo e tabela `sessions`
 
 **Objetivo:** mensagens do servidor com confidencialidade, integridade e anti-replay.
 
@@ -204,7 +204,7 @@ tp3/
 
 ---
 
-## Etapa 5: Rendezvous (distribuição de chaves públicas)
+## [ ] Etapa 5: Rendezvous (distribuição de chaves públicas)
 
 **Objetivo:** todos os clientes conhecem as `pk` dos outros.
 
@@ -225,7 +225,7 @@ tp3/
 
 ---
 
-## Etapa 6: Derivação das chaves E2E (tabela `peers`)
+## [ ] Etapa 6: Derivação das chaves E2E (tabela `peers`)
 
 **Objetivo:** A e B chegam nas mesmas chaves sem o servidor participar.
 
@@ -247,7 +247,7 @@ tp3/
 
 ---
 
-## Etapa 7: Mensagem E2E e relay
+## [ ] Etapa 7: Mensagem E2E e relay
 
 **Objetivo:** A manda para B, o servidor só repassa.
 
@@ -270,7 +270,7 @@ tp3/
 
 ---
 
-## Etapa 8: Ataques e rejeições (os 4 testes obrigatórios)
+## [ ] Etapa 8: Ataques e rejeições (os 4 testes obrigatórios)
 
 **Objetivo:** demonstrar proteção contra adulteração e replay.
 
@@ -296,7 +296,7 @@ Verificações extras:
 
 ---
 
-## Etapa 9: Reconexão, logs, documentação e demo
+## [ ] Etapa 9: Reconexão, logs, documentação e demo
 
 **Objetivo:** fechar os requisitos operacionais e a apresentação.
 
