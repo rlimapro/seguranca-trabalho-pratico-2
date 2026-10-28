@@ -17,8 +17,11 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+from common.admin import AdminChannel
+from common.crypto import ecdh, hkdf_extract_expand
 from common.framing import FrameError, recv_frame, send_frame
 from common.protocol import (
+    ERROR,
     HELLO,
     SERVER_HELLO,
     decode_hello,
@@ -27,6 +30,8 @@ from common.protocol import (
 )
 
 logger = logging.getLogger("tp3.handshake_server")
+sessions: dict[bytes, dict] = {}
+sessions_lock = asyncio.Lock()
 
 
 class HandshakeError(ValueError):
@@ -132,17 +137,51 @@ async def handle_handshake_client(
     writer: StreamWriter,
     signing_key: rsa.RSAPrivateKey,
     certificate_der: bytes,
+    session_store: dict[bytes, dict] | None = None,
+    session_lock: asyncio.Lock | None = None,
 ) -> None:
-    """Handle one handshake and keep its TCP connection open until client EOF.
-
-    The current stage has no post-handshake messages. The next stage will
-    replace the idle wait with the authenticated administrative channel.
-    """
+    """Handle handshake, establish the admin channel, and retain the session."""
     peer = writer.get_extra_info("peername")
-    session: ServerHandshake | None = None
+    active_sessions = session_store if session_store is not None else sessions
+    active_lock = session_lock if session_lock is not None else sessions_lock
+    server_handshake: ServerHandshake | None = None
+    handshake_client_id: bytes | None = None
+    session: dict | None = None
     try:
-        session = await perform_server_handshake(reader, writer, signing_key, certificate_der)
-        logger.info("handshake autenticado: client_id=%s peer=%s", session.client_id.hex(), peer)
+        server_handshake = await perform_server_handshake(reader, writer, signing_key, certificate_der)
+        handshake_client_id = server_handshake.client_id
+        shared_secret = ecdh(server_handshake.server_private_key, server_handshake.client_public_key)
+        key_c2s = hkdf_extract_expand(server_handshake.salt_srv, shared_secret, b"C2S")
+        key_s2c = hkdf_extract_expand(server_handshake.salt_srv, shared_secret, b"S2C")
+        del shared_secret
+
+        session = {
+            "writer": writer,
+            "public_key": server_handshake.client_public_key,
+            "salt": server_handshake.salt_srv,
+            "seq_send": 0,
+            "seq_recv": -1,
+        }
+        admin = AdminChannel(
+            reader,
+            writer,
+            key_send=key_s2c,
+            key_recv=key_c2s,
+            direction_send=1,
+            direction_recv=0,
+            sequence_state=session,
+        )
+        session["admin"] = admin
+        async with active_lock:
+            active_sessions[handshake_client_id] = session
+
+        logger.info("handshake autenticado: client_id=%s peer=%s", handshake_client_id.hex(), peer)
+        # The server ephemeral private key is no longer needed after deriving
+        # the administrative keys; keep only the connection state and keys.
+        server_handshake = None
+        await admin.send_admin(ERROR, b"Registro confirmado")
+        # The administrative receive path is available through AdminChannel;
+        # this stage has no client-originated admin messages yet.
         await reader.read()
     except (IncompleteReadError, FrameError, HandshakeError, InvalidKey, OSError) as exc:
         logger.info("handshake rejeitado (%s): peer=%s", exc, peer)
@@ -154,9 +193,11 @@ async def handle_handshake_client(
             await writer.wait_closed()
         except (ConnectionError, OSError):
             pass
-        # Keep the ephemeral private key alive for this connection's lifetime;
-        # it will be used to derive the administrative channel in stage 4.
-        session = None
+        if handshake_client_id is not None:
+            async with active_lock:
+                current = active_sessions.get(handshake_client_id)
+                if current is session:
+                    active_sessions.pop(handshake_client_id, None)
 
 
 async def serve(
@@ -173,6 +214,8 @@ async def serve(
             writer,
             signing_key,
             certificate_der,
+            sessions,
+            sessions_lock,
         ),
         host,
         port,

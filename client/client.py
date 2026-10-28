@@ -17,9 +17,11 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
-from common.crypto import gen_x25519
+from common.admin import AdminChannel
+from common.crypto import ecdh, gen_x25519, hkdf_extract_expand
 from common.framing import FrameError, recv_frame, send_frame
 from common.protocol import (
+    ERROR,
     HELLO,
     SERVER_HELLO,
     decode_server_hello,
@@ -46,6 +48,14 @@ class ClientHandshake:
     certificate_der: bytes
     reader: StreamReader
     writer: StreamWriter
+
+
+@dataclass(frozen=True)
+class AdminClientConnection:
+    """Authenticated administrative channel and its registration notice."""
+
+    channel: AdminChannel
+    confirmation: bytes
 
 
 def certificate_to_der(certificate_bytes: bytes) -> bytes:
@@ -169,11 +179,45 @@ async def connect_and_handshake(
         raise
 
 
+async def establish_admin_channel(handshake: ClientHandshake) -> AdminClientConnection:
+    """Derive C2S/S2C keys and receive the server's encrypted confirmation."""
+    try:
+        shared_secret = ecdh(handshake.private_key, handshake.server_public_key)
+        key_c2s = hkdf_extract_expand(handshake.salt_srv, shared_secret, b"C2S")
+        key_s2c = hkdf_extract_expand(handshake.salt_srv, shared_secret, b"S2C")
+        del shared_secret
+
+        channel = AdminChannel(
+            handshake.reader,
+            handshake.writer,
+            key_send=key_c2s,
+            key_recv=key_s2c,
+            direction_send=0,
+            direction_recv=1,
+        )
+        message_type, plaintext, _seq = await channel.recv_admin()
+        if message_type != ERROR:
+            raise HandshakeError("server did not send the registration confirmation")
+        return AdminClientConnection(channel=channel, confirmation=plaintext)
+    except Exception:
+        handshake.writer.close()
+        try:
+            await handshake.writer.wait_closed()
+        except (ConnectionError, OSError):
+            pass
+        raise
+
+
 async def _run_cli(host: str, port: int, pin_path: str) -> None:
-    connection = await connect_and_handshake(host, port, pin_path)
-    print(f"Handshake autenticado com sucesso. client_id={uuid.UUID(bytes=connection.client_id)}")
-    connection.writer.close()
-    await connection.writer.wait_closed()
+    handshake = await connect_and_handshake(host, port, pin_path)
+    admin = await establish_admin_channel(handshake)
+    print(
+        "Handshake autenticado; canal administrativo cifrado. "
+        f"client_id={uuid.UUID(bytes=handshake.client_id)}; "
+        f"confirmação={admin.confirmation.decode('utf-8', errors='replace')}"
+    )
+    handshake.writer.close()
+    await handshake.writer.wait_closed()
 
 
 def main() -> None:
