@@ -225,7 +225,7 @@ tp3/
 
 ---
 
-## [ ] Etapa 6: Derivação das chaves E2E (tabela `peers`)
+## [x] Etapa 6: Derivação das chaves E2E (tabela `peers`)
 
 **Objetivo:** A e B chegam nas mesmas chaves sem o servidor participar.
 

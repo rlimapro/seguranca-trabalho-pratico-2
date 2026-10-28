@@ -79,9 +79,11 @@ class RendezvousTests(unittest.IsolatedAsyncioTestCase):
         self.clients.append(connection)
         return connection
 
-    async def receive_peer_event(self, admin):
+    async def receive_peer_event(self, handshake, admin):
         message_type, plaintext, _seq = await admin.channel.recv_admin()
-        return apply_peer_event(admin.known_peers, message_type, plaintext)
+        return apply_peer_event(
+            handshake, admin.known_peers, admin.peers, message_type, plaintext
+        )
 
     async def test_three_clients_learn_all_other_peers_and_leave(self):
         first = await self.connect_client()
@@ -92,32 +94,43 @@ class RendezvousTests(unittest.IsolatedAsyncioTestCase):
         third_hs, third_admin, *_ = third
 
         # New clients learn all existing peers; existing clients learn the newcomer.
-        self.assertEqual((await self.receive_peer_event(second_admin))[0], first_hs.client_id)
-        self.assertEqual((await self.receive_peer_event(first_admin))[0], second_hs.client_id)
-        self.assertEqual((await self.receive_peer_event(third_admin))[0], first_hs.client_id)
-        self.assertEqual((await self.receive_peer_event(third_admin))[0], second_hs.client_id)
-        self.assertEqual((await self.receive_peer_event(first_admin))[0], third_hs.client_id)
-        self.assertEqual((await self.receive_peer_event(second_admin))[0], third_hs.client_id)
+        self.assertEqual((await self.receive_peer_event(second_hs, second_admin))[0], first_hs.client_id)
+        self.assertEqual((await self.receive_peer_event(first_hs, first_admin))[0], second_hs.client_id)
+        self.assertEqual((await self.receive_peer_event(third_hs, third_admin))[0], first_hs.client_id)
+        self.assertEqual((await self.receive_peer_event(third_hs, third_admin))[0], second_hs.client_id)
+        self.assertEqual((await self.receive_peer_event(first_hs, first_admin))[0], third_hs.client_id)
+        self.assertEqual((await self.receive_peer_event(second_hs, second_admin))[0], third_hs.client_id)
 
         self.assertEqual(set(first_admin.known_peers), {second_hs.client_id, third_hs.client_id})
         self.assertEqual(set(second_admin.known_peers), {first_hs.client_id, third_hs.client_id})
         self.assertEqual(set(third_admin.known_peers), {first_hs.client_id, second_hs.client_id})
+        self.assertEqual(
+            first_admin.peers[second_hs.client_id].key_send,
+            second_admin.peers[first_hs.client_id].key_recv,
+        )
+        self.assertEqual(
+            first_admin.peers[second_hs.client_id].key_recv,
+            second_admin.peers[first_hs.client_id].key_send,
+        )
         for handshake, admin, *_ in self.clients:
             self.assertNotIn(handshake.client_id, admin.known_peers)
+            self.assertNotIn(handshake.client_id, admin.peers)
 
         third[2].close()
         await third[3]
-        self.assertEqual((await self.receive_peer_event(first_admin))[0], third_hs.client_id)
-        self.assertEqual((await self.receive_peer_event(second_admin))[0], third_hs.client_id)
+        self.assertEqual((await self.receive_peer_event(first_hs, first_admin))[0], third_hs.client_id)
+        self.assertEqual((await self.receive_peer_event(second_hs, second_admin))[0], third_hs.client_id)
         self.assertNotIn(third_hs.client_id, first_admin.known_peers)
         self.assertNotIn(third_hs.client_id, second_admin.known_peers)
+        self.assertNotIn(third_hs.client_id, first_admin.peers)
+        self.assertNotIn(third_hs.client_id, second_admin.peers)
 
     async def test_simultaneous_arrivals_keep_confirmation_before_peer_info(self):
         first, second = await asyncio.gather(self.connect_client(), self.connect_client())
         first_hs, first_admin, *_ = first
         second_hs, second_admin, *_ = second
-        self.assertEqual((await self.receive_peer_event(first_admin))[0], second_hs.client_id)
-        self.assertEqual((await self.receive_peer_event(second_admin))[0], first_hs.client_id)
+        self.assertEqual((await self.receive_peer_event(first_hs, first_admin))[0], second_hs.client_id)
+        self.assertEqual((await self.receive_peer_event(second_hs, second_admin))[0], first_hs.client_id)
         self.assertEqual(set(first_admin.known_peers), {second_hs.client_id})
         self.assertEqual(set(second_admin.known_peers), {first_hs.client_id})
 

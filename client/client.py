@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from common.admin import AdminChannel
 from common.crypto import ecdh, fingerprint, gen_x25519, hkdf_extract_expand
 from common.framing import FrameError, recv_frame, send_frame
+from common.peer import PeerSession, derive_peer_session
 from common.protocol import (
     ERROR,
     HELLO,
@@ -61,19 +62,36 @@ class AdminClientConnection:
     channel: AdminChannel
     confirmation: bytes
     known_peers: dict[bytes, tuple[bytes, bytes]]
+    peers: dict[bytes, PeerSession]
 
 
 def apply_peer_event(
-    known_peers: dict[bytes, tuple[bytes, bytes]], message_type: int, plaintext: bytes
+    handshake: ClientHandshake,
+    known_peers: dict[bytes, tuple[bytes, bytes]],
+    peers: dict[bytes, PeerSession],
+    message_type: int,
+    plaintext: bytes,
 ) -> tuple[bytes, str] | None:
-    """Update the known-peers table and return a displayable event."""
+    """Update peer metadata and derived E2E keys; return a displayable event."""
     if message_type == PEER_INFO:
         peer_id, public_key, salt = decode_peer_info(plaintext)
+        if peer_id == handshake.client_id:
+            raise ValueError("server sent this client's own identity as a peer")
+        peer_session = derive_peer_session(
+            handshake.client_id,
+            peer_id,
+            handshake.private_key,
+            public_key,
+            handshake.salt_srv,
+            salt,
+        )
         known_peers[peer_id] = (public_key, salt)
+        peers[peer_id] = peer_session
         return peer_id, fingerprint(public_key)
     if message_type == PEER_LEFT:
         peer_id = decode_peer_left(plaintext)
         known_peers.pop(peer_id, None)
+        peers.pop(peer_id, None)
         return peer_id, "left"
     if message_type == ERROR:
         return None
@@ -220,7 +238,9 @@ async def establish_admin_channel(handshake: ClientHandshake) -> AdminClientConn
         message_type, plaintext, _seq = await channel.recv_admin()
         if message_type != ERROR:
             raise HandshakeError("server did not send the registration confirmation")
-        return AdminClientConnection(channel=channel, confirmation=plaintext, known_peers={})
+        return AdminClientConnection(
+            channel=channel, confirmation=plaintext, known_peers={}, peers={}
+        )
     except Exception:
         handshake.writer.close()
         try:
@@ -241,13 +261,22 @@ async def _run_cli(host: str, port: int, pin_path: str) -> None:
     try:
         while True:
             message_type, plaintext, _seq = await admin.channel.recv_admin()
-            event = apply_peer_event(admin.known_peers, message_type, plaintext)
+            event = apply_peer_event(
+                handshake,
+                admin.known_peers,
+                admin.peers,
+                message_type,
+                plaintext,
+            )
             if event is not None:
                 peer_id, detail = event
                 if detail == "left":
                     print(f"Peer saiu: {uuid.UUID(bytes=peer_id)}")
                 else:
-                    print(f"Peer: {uuid.UUID(bytes=peer_id)} fingerprint={detail}")
+                    print(
+                        f"Peer: {uuid.UUID(bytes=peer_id)} fingerprint={detail}; "
+                        "chaves E2E derivadas"
+                    )
     finally:
         handshake.writer.close()
         await handshake.writer.wait_closed()
