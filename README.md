@@ -166,7 +166,7 @@ sequenceDiagram
     Note over A,B: Derivam A2B/B2A localmente
     A->>S: E2E cifrado com nonce, IDs e seq
     S->>B: Mesmo frame E2E, sem alteração
-    B->>B: Verifica seq e tag; então decifra
+    B->>B: Verifica seq e tag, então decifra
 ```
 
 Para demonstrar rejeições, inicie um cliente com `--attack bitflip` ou
