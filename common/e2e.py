@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from asyncio import StreamWriter
 
+from cryptography.exceptions import InvalidTag
+
 from common.crypto import aes_decrypt, aes_encrypt, build_aad_e2e, build_nonce
 from common.framing import send_frame
 from common.peer import PeerSession
@@ -23,12 +25,18 @@ class E2EReplayError(E2EProtocolError):
     """Raised when an E2E sequence has already been accepted."""
 
 
+class E2EAuthenticationError(E2EProtocolError):
+    """Raised when the E2E payload fails AES-GCM authentication."""
+
+
 async def send_e2e(
     writer: StreamWriter,
     sender_id: bytes,
     recipient_id: bytes,
     peer: PeerSession,
     plaintext: bytes,
+    *,
+    attack: str | None = None,
 ) -> bytes:
     """Encrypt and send one E2E frame, returning the exact relay payload."""
     if not isinstance(plaintext, bytes):
@@ -37,6 +45,8 @@ async def send_e2e(
         raise E2EProtocolError(f"plaintext exceeds {MAX_PLAINTEXT} bytes")
     if len(sender_id) != 16 or len(recipient_id) != 16:
         raise E2EProtocolError("sender and recipient IDs must be exactly 16 bytes")
+    if attack not in (None, "bitflip", "replay"):
+        raise E2EProtocolError("attack must be bitflip, replay, or None")
 
     async with peer.send_lock:
         seq = peer.seq_send
@@ -46,7 +56,12 @@ async def send_e2e(
         aad = build_aad_e2e(sender_id, recipient_id, seq)
         ciphertext = aes_encrypt(peer.key_send, nonce, aad, plaintext)
         payload = nonce + sender_id + recipient_id + seq.to_bytes(8, "big") + ciphertext
+        if attack == "bitflip":
+            # Alter one tag bit while preserving a syntactically valid frame.
+            payload = payload[:-1] + bytes((payload[-1] ^ 1,))
         await send_frame(writer, E2E, payload)
+        if attack == "replay":
+            await send_frame(writer, E2E, payload)
         peer.seq_send = seq + 1
         return payload
 
@@ -74,6 +89,9 @@ def receive_e2e(
         raise E2EReplayError(f"E2E replay: seq={seq}")
 
     aad = build_aad_e2e(sender_id, recipient_id, seq)
-    plaintext = aes_decrypt(peer.key_recv, nonce, aad, payload[E2E_HEADER_LENGTH:])
+    try:
+        plaintext = aes_decrypt(peer.key_recv, nonce, aad, payload[E2E_HEADER_LENGTH:])
+    except InvalidTag as exc:
+        raise E2EAuthenticationError("E2E authentication tag is invalid") from exc
     peer.seq_recv = seq
     return sender_id, plaintext

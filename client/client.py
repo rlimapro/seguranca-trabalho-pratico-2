@@ -19,7 +19,13 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from common.admin import ADMIN_TYPES, AdminChannel
 from common.crypto import ecdh, fingerprint, gen_x25519, hkdf_extract_expand
-from common.e2e import receive_e2e, send_e2e
+from common.e2e import (
+    E2EAuthenticationError,
+    E2EProtocolError,
+    E2EReplayError,
+    receive_e2e,
+    send_e2e,
+)
 from common.framing import FrameError, recv_frame, send_frame
 from common.peer import PeerSession, derive_peer_session
 from common.protocol import (
@@ -117,6 +123,7 @@ async def send_to_peer(
     handshake: ClientHandshake,
     admin: AdminClientConnection,
     command: str,
+    attack: str | None = None,
 ) -> tuple[bytes, int, bytes]:
     """Parse ``/to <id-or-prefix> <message>`` and send it E2E."""
     parts = command.split(maxsplit=2)
@@ -129,6 +136,7 @@ async def send_to_peer(
         peer_id,
         admin.peers[peer_id],
         parts[2].encode("utf-8"),
+        attack=attack,
     )
     seq = int.from_bytes(payload[44:52], "big")
     return peer_id, seq, payload
@@ -286,7 +294,7 @@ async def establish_admin_channel(handshake: ClientHandshake) -> AdminClientConn
         raise
 
 
-async def _run_cli(host: str, port: int, pin_path: str) -> None:
+async def _run_cli(host: str, port: int, pin_path: str, attack: str | None = None) -> None:
     handshake = await connect_and_handshake(host, port, pin_path)
     admin = await establish_admin_channel(handshake)
     print(
@@ -302,7 +310,7 @@ async def _run_cli(host: str, port: int, pin_path: str) -> None:
             except EOFError:
                 break
             try:
-                peer_id, seq, _payload = await send_to_peer(handshake, admin, command)
+                peer_id, seq, _payload = await send_to_peer(handshake, admin, command, attack)
                 print(f"Mensagem enviada para {uuid.UUID(bytes=peer_id)} (seq={seq})")
             except (ValueError, UnicodeError) as exc:
                 print(f"Comando recusado: {exc}")
@@ -319,7 +327,20 @@ async def _receive_messages(
 ) -> None:
     """Read and dispatch administrative and E2E frames from the server."""
     while True:
-        message_type, payload = await recv_frame(handshake.reader)
+        try:
+            message_type, payload = await recv_frame(handshake.reader)
+        except (FrameError, asyncio.IncompleteReadError) as exc:
+            logger.info(
+                "framing inválido; conexão encerrada: client_id=%s motivo=%s",
+                handshake.client_id.hex(),
+                exc,
+            )
+            handshake.writer.close()
+            try:
+                await handshake.writer.wait_closed()
+            except (ConnectionError, OSError):
+                pass
+            return
         if message_type in ADMIN_TYPES:
             message_type, plaintext, _seq = admin.channel.decode_admin_frame(message_type, payload)
             if message_type == ERROR:
@@ -342,7 +363,20 @@ async def _receive_messages(
                         "chaves E2E derivadas"
                     )
         elif message_type == E2E:
-            sender_id, plaintext = receive_e2e(handshake.client_id, admin.peers, payload)
+            try:
+                sender_id, plaintext = receive_e2e(handshake.client_id, admin.peers, payload)
+            except E2EReplayError:
+                logger.warning("mensagem E2E rejeitada: client_id=%s motivo=replay", handshake.client_id.hex())
+                continue
+            except E2EAuthenticationError:
+                logger.warning(
+                    "mensagem E2E rejeitada: client_id=%s motivo=tag inválida",
+                    handshake.client_id.hex(),
+                )
+                continue
+            except E2EProtocolError as exc:
+                logger.warning("mensagem E2E rejeitada: client_id=%s motivo=%s", handshake.client_id.hex(), exc)
+                continue
             message = plaintext.decode("utf-8", errors="replace")
             print(f"Mensagem de {uuid.UUID(bytes=sender_id)}: {message}")
         else:
@@ -354,11 +388,12 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--pin", default="client/certs/server.crt")
+    parser.add_argument("--attack", choices=("bitflip", "replay"), help="altera ou repete os frames E2E enviados")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
-        asyncio.run(_run_cli(args.host, args.port, args.pin))
+        asyncio.run(_run_cli(args.host, args.port, args.pin, args.attack))
     except KeyboardInterrupt:
         logger.info("cliente interrompido")
     except (HandshakeError, FrameError, OSError) as exc:

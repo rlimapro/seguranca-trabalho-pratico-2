@@ -270,7 +270,7 @@ tp3/
 
 ---
 
-## [ ] Etapa 8: Ataques e rejeições (os 4 testes obrigatórios)
+## [x] Etapa 8: Ataques e rejeições (os 4 testes obrigatórios)
 
 **Objetivo:** demonstrar proteção contra adulteração e replay.
 

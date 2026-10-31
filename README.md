@@ -3,7 +3,7 @@
 Implementação incremental em Python, `asyncio` e `cryptography`. O plano completo
 e as decisões de protocolo estão em [`AGENTS.md`](AGENTS.md).
 
-## Etapas 0–7
+## Etapas 0–8
 
 As etapas 0–4 preparam o certificado pinado, framing TCP, primitivas
 criptográficas, handshake autenticado e canal administrativo cifrado. A etapa 5
@@ -16,6 +16,17 @@ as chaves direcionais E2E; o servidor não as recebe. A etapa 7 acrescenta o
 envio de mensagens com `/to <id_ou_prefixo> mensagem`: o cliente cifra com
 AES-GCM, e o servidor encaminha o frame sem abrir ou alterar seu conteúdo. O
 remetente limita o plaintext a 4096 bytes.
+
+### Na história — etapa 8
+
+Na cena 8, o destinatário rejeita uma tag GCM alterada e frames repetidos sem
+avançar incorretamente o contador; depois de cada rejeição, mensagens válidas
+continuam sendo aceitas. O cliente registra somente o motivo e seu `client_id`.
+Tamanho declarado acima de `MAX_FRAME` e frame truncado encerram a conexão
+afetada. Esta etapa acrescenta `--attack bitflip` e `--attack replay` para
+corromper ou repetir cada mensagem enviada pelo cliente durante a demonstração;
+ela não acrescenta novos mecanismos criptográficos nem protege contra MITM na
+distribuição de chaves públicas.
 
 ### Na história
 
@@ -64,3 +75,9 @@ recebem `PEER_LEFT`.
 ```sh
 python -m pytest -q
 ```
+
+Para demonstrar rejeições, inicie um cliente com `--attack bitflip` ou
+`--attack replay` e envie `/to <id_ou_prefixo> mensagem` para outro cliente. O
+primeiro modo altera um bit da tag AES-GCM; o segundo transmite o mesmo frame
+duas vezes. O cliente destinatário rejeita o frame afetado e mantém a sessão
+ativa.
