@@ -1,7 +1,37 @@
 # TP3 — Mensageria segura E2E
 
-Implementação incremental em Python, `asyncio` e `cryptography`. O plano completo
-e as decisões de protocolo estão em [`AGENTS.md`](AGENTS.md).
+Mensageria multi-cliente em Python 3, `asyncio` e `cryptography`. O servidor
+autentica sua identidade no handshake e atua como relay; Alice e Bruno derivam
+localmente chaves direcionais e o destinatário valida a tag antes de decifrar.
+
+## Guias e material da apresentação
+
+- [BLOCOS.md](BLOCOS.md): quatro blocos coesos, divisão sugerida para a dupla,
+  conceitos criptográficos e arquivos/métodos para apresentar.
+- [COMO-USAR.md](COMO-USAR.md): instalação, servidor e clientes em terminais
+  separados, ataques, laboratório web e testes.
+- [MERMAID.md](MERMAID.md): diagramas de sequência, um por bloco.
+- [trabalho-pratico-3.md](trabalho-pratico-3.md): enunciado e critérios da
+  atividade.
+- [AGENTS.md](AGENTS.md): plano incremental, decisões de protocolo e status
+  das etapas.
+
+Para os comandos completos, siga [COMO-USAR.md](COMO-USAR.md). Em resumo:
+instale as dependências, prepare certificado e chave local se necessário,
+inicie o servidor em um terminal e execute cada cliente em outro terminal.
+
+## Resumo do protocolo
+
+O cliente autentica o servidor pelo certificado pinado e RSA-PSS. ECDH X25519 e
+HKDF-SHA256 derivam as chaves do canal administrativo. No rendezvous, os peers
+recebem as chaves públicas um do outro e derivam localmente `A2B`/`B2A`; o
+servidor não recebe as chaves E2E. AES-128-GCM protege mensagens, e sequência,
+nonce, AAD e tag permitem rejeitar replay e adulteração.
+
+O salt E2E é `SHA256(salt_do_menor_id || salt_do_maior_id)[:16]`, para que os
+dois clientes obtenham o mesmo valor apesar de seus handshakes independentes.
+O RSA-PSS usa SHA-256 com `Prehashed(SHA256)` para assinar o digest do
+transcript.
 
 ## Etapas 0–9
 
@@ -61,7 +91,7 @@ demonstração dos ataques de bitflip e replay, que pertence à etapa 8.
 
 ## Como executar
 
-Na pasta `tp3/`, gere uma chave e certificado locais (a chave privada não deve
+Na raiz deste repositório, gere uma chave e certificado locais (a chave privada não deve
 ser versionada), copie o certificado público para o pin do cliente e instale as
 dependências:
 
@@ -169,7 +199,6 @@ operador local; use a interface para estudar o fluxo, não como implantação de
 produção.
 
 ```sh
-cd tp3
 python -m web.app
 ```
 
@@ -181,3 +210,15 @@ mensagem pelo painel. O controle de delay muda
 o ritmo dos eventos visuais; ele não altera os timers ou contadores do
 protocolo. A interface fica vinculada a `127.0.0.1` e o servidor de mensagens
 usa uma porta local efêmera.
+
+## Publicação e `.gitignore`
+
+O `.gitignore` exclui ambientes virtuais, caches Python e
+`certs/server.key`. Os certificados `server.crt` são públicos e permanecem no
+repositório para serem pinados pelos clientes. Antes de publicar, confira que
+a chave privada está ignorada e não foi staged:
+
+```sh
+git status --short
+git check-ignore -v certs/server.key
+```
