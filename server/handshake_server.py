@@ -41,6 +41,28 @@ _E2E_HEADER_LENGTH = 12 + 16 + 16 + 8
 _E2E_TAG_LENGTH = 16
 
 
+class ConnectionLimiter:
+    """Count accepted handlers and reject connections beyond a configured cap."""
+
+    def __init__(self, maximum: int):
+        if isinstance(maximum, bool) or maximum < 1:
+            raise ValueError("maximum connections must be positive")
+        self.maximum = maximum
+        self.active = 0
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> bool:
+        async with self._lock:
+            if self.active >= self.maximum:
+                return False
+            self.active += 1
+            return True
+
+    async def release(self) -> None:
+        async with self._lock:
+            self.active -= 1
+
+
 async def relay_e2e_frame(
     sender_id: bytes,
     payload: bytes,
@@ -169,6 +191,7 @@ async def handle_handshake_client(
     certificate_der: bytes,
     session_store: dict[bytes, dict] | None = None,
     session_lock: asyncio.Lock | None = None,
+    connection_limiter: ConnectionLimiter | None = None,
 ) -> None:
     """Handle handshake, establish the admin channel, and retain the session."""
     peer = writer.get_extra_info("peername")
@@ -177,7 +200,13 @@ async def handle_handshake_client(
     server_handshake: ServerHandshake | None = None
     handshake_client_id: bytes | None = None
     session: dict | None = None
+    limiter_acquired = False
     try:
+        if connection_limiter is not None:
+            limiter_acquired = await connection_limiter.acquire()
+            if not limiter_acquired:
+                logger.warning("conexão recusada: motivo=limite de conexões")
+                return
         server_handshake = await perform_server_handshake(reader, writer, signing_key, certificate_der)
         handshake_client_id = server_handshake.client_id
         shared_secret = ecdh(server_handshake.server_private_key, server_handshake.client_public_key)
@@ -206,6 +235,12 @@ async def handle_handshake_client(
         # the administrative keys; keep only the connection state and keys.
         server_handshake = None
         async with active_lock:
+            previous = active_sessions.get(handshake_client_id)
+            if previous is not None:
+                # Replacing the map entry first makes the old handler's finally
+                # block unable to remove the new authenticated session.
+                previous["writer"].close()
+                logger.info("sessão substituída: client_id=%s", handshake_client_id.hex())
             active_sessions[handshake_client_id] = session
             logger.info("handshake autenticado: client_id=%s peer=%s", handshake_client_id.hex(), peer)
             # Keep registration and initial sends atomic with respect to other
@@ -255,6 +290,7 @@ async def handle_handshake_client(
                 current = active_sessions.get(handshake_client_id)
                 if current is session:
                     active_sessions.pop(handshake_client_id, None)
+                    logger.info("desconexão: client_id=%s", handshake_client_id.hex())
                     for peer_id, peer_session in tuple(active_sessions.items()):
                         try:
                             await peer_session["admin"].send_admin(
@@ -262,6 +298,8 @@ async def handle_handshake_client(
                             )
                         except (ConnectionError, OSError):
                             logger.info("falha ao notificar saída: client_id=%s", peer_id.hex())
+        if limiter_acquired and connection_limiter is not None:
+            await connection_limiter.release()
 
 
 async def serve(
@@ -269,8 +307,10 @@ async def serve(
     port: int = 8766,
     certificate_path: str | os.PathLike[str] = "certs/server.crt",
     private_key_path: str | os.PathLike[str] = "certs/server.key",
+    max_connections: int = 100,
 ) -> None:
     certificate_der, signing_key = load_server_credentials(certificate_path, private_key_path)
+    limiter = ConnectionLimiter(max_connections)
 
     server = await asyncio.start_server(
         lambda reader, writer: handle_handshake_client(
@@ -280,6 +320,7 @@ async def serve(
             certificate_der,
             sessions,
             sessions_lock,
+            limiter,
         ),
         host,
         port,
@@ -297,11 +338,12 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--cert", default="certs/server.crt")
     parser.add_argument("--key", default="certs/server.key")
+    parser.add_argument("--max-connections", type=int, default=100)
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
-        asyncio.run(serve(args.host, args.port, args.cert, args.key))
+        asyncio.run(serve(args.host, args.port, args.cert, args.key, args.max_connections))
     except KeyboardInterrupt:
         logger.info("servidor interrompido")
 

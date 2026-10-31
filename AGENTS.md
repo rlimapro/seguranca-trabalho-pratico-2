@@ -296,7 +296,7 @@ Verificações extras:
 
 ---
 
-## [ ] Etapa 9: Reconexão, logs, documentação e demo
+## [x] Etapa 9: Reconexão, logs, documentação e demo
 
 **Objetivo:** fechar os requisitos operacionais e a apresentação.
 

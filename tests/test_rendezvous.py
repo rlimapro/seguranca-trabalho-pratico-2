@@ -1,6 +1,8 @@
 import asyncio
 import datetime
 import unittest
+import uuid
+from unittest.mock import patch
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -15,7 +17,7 @@ from client.client import (
 from common.e2e import E2EProtocolError, MAX_PLAINTEXT, receive_e2e, send_e2e
 from common.framing import recv_frame, send_frame
 from common.protocol import E2E, ERROR
-from server.handshake_server import handle_handshake_client
+from server.handshake_server import ConnectionLimiter, handle_handshake_client
 
 
 class MemoryWriter:
@@ -65,7 +67,7 @@ class RendezvousTests(unittest.IsolatedAsyncioTestCase):
         self.lock = asyncio.Lock()
         self.clients = []
 
-    async def connect_client(self):
+    async def connect_client(self, client_id=None, limiter=None):
         client_reader = asyncio.StreamReader()
         server_reader = asyncio.StreamReader()
         client_writer = MemoryWriter(server_reader)
@@ -78,9 +80,14 @@ class RendezvousTests(unittest.IsolatedAsyncioTestCase):
                 self.certificate,
                 self.sessions,
                 self.lock,
+                limiter,
             )
         )
-        handshake = await perform_client_handshake(client_reader, client_writer, self.certificate)
+        if client_id is None:
+            handshake = await perform_client_handshake(client_reader, client_writer, self.certificate)
+        else:
+            with patch("client.client.uuid.uuid4", return_value=uuid.UUID(bytes=client_id)):
+                handshake = await perform_client_handshake(client_reader, client_writer, self.certificate)
         admin = await establish_admin_channel(handshake)
         connection = (handshake, admin, client_writer, task)
         self.clients.append(connection)
@@ -196,6 +203,61 @@ class RendezvousTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.receive_peer_event(second_hs, second_admin))[0], first_hs.client_id)
         self.assertEqual(set(first_admin.known_peers), {second_hs.client_id})
         self.assertEqual(set(second_admin.known_peers), {first_hs.client_id})
+
+    async def test_reconnect_replaces_session_and_peers_get_fresh_material(self):
+        old_a = await self.connect_client()
+        b = await self.connect_client()
+        old_hs, old_admin, old_writer, old_task = old_a
+        b_hs, b_admin, *_ = b
+        await self.receive_peer_event(old_hs, old_admin)
+        await self.receive_peer_event(b_hs, b_admin)
+        old_peer_key = b_admin.peers[old_hs.client_id].key_send
+
+        new_a = await self.connect_client(client_id=old_hs.client_id)
+        new_hs, new_admin, _new_writer, _new_task = new_a
+        replacement_notice = await self.receive_peer_event(b_hs, b_admin)
+        await self.receive_peer_event(new_hs, new_admin)
+
+        self.assertEqual(replacement_notice[0], old_hs.client_id)
+        self.assertNotEqual(old_hs.public_key, new_hs.public_key)
+        self.assertNotEqual(old_hs.salt_srv, new_hs.salt_srv)
+        self.assertNotEqual(old_peer_key, b_admin.peers[old_hs.client_id].key_send)
+        self.assertEqual(b_admin.known_peers[old_hs.client_id], (new_hs.public_key, new_hs.salt_srv))
+        self.assertEqual(self.sessions[old_hs.client_id]["public_key"], new_hs.public_key)
+        self.assertEqual(self.sessions[old_hs.client_id]["salt"], new_hs.salt_srv)
+        old_writer.close()
+        await old_task
+
+    async def test_connection_limit_rejects_excess_connection_safely(self):
+        limiter = ConnectionLimiter(1)
+        self.assertTrue(await limiter.acquire())
+        server_reader = asyncio.StreamReader()
+        client_reader = asyncio.StreamReader()
+        writer = MemoryWriter(client_reader)
+        await handle_handshake_client(
+            server_reader,
+            writer,
+            self.signing_key,
+            self.certificate,
+            self.sessions,
+            self.lock,
+            limiter,
+        )
+        self.assertTrue(writer.closed)
+        self.assertEqual(limiter.active, 1)
+        await limiter.release()
+        self.assertEqual(limiter.active, 0)
+
+    async def test_server_logs_do_not_contain_peer_key_or_salt(self):
+        with self.assertLogs("tp3.handshake_server", level="INFO") as captured:
+            client = await self.connect_client()
+            handshake = client[0]
+            client[2].close()
+            await client[3]
+        log_text = "\n".join(captured.output)
+        self.assertIn(handshake.client_id.hex(), log_text)
+        self.assertNotIn(handshake.public_key.hex(), log_text)
+        self.assertNotIn(handshake.salt_srv.hex(), log_text)
 
     async def asyncTearDown(self):
         for _handshake, _admin, writer, task in self.clients:

@@ -3,7 +3,7 @@
 Implementação incremental em Python, `asyncio` e `cryptography`. O plano completo
 e as decisões de protocolo estão em [`AGENTS.md`](AGENTS.md).
 
-## Etapas 0–8
+## Etapas 0–9
 
 As etapas 0–4 preparam o certificado pinado, framing TCP, primitivas
 criptográficas, handshake autenticado e canal administrativo cifrado. A etapa 5
@@ -28,6 +28,16 @@ corromper ou repetir cada mensagem enviada pelo cliente durante a demonstração
 ela não acrescenta novos mecanismos criptográficos nem protege contra MITM na
 distribuição de chaves públicas.
 
+### Na história — etapa 9
+
+Esta etapa fecha a apresentação: Alice pode reconectar com o mesmo ID, mas
+ganha novo par X25519, novo salt e novas chaves; Bruno recebe um `PEER_INFO`
+atualizado. O servidor limita conexões simultâneas e os logs registram eventos,
+IDs e motivos sem material criptográfico ou conteúdo. O script de demonstração
+cria três clientes e mostra troca normal, bitflip, replay, recuperação e
+desconexão por framing inválido. Fingerprints ainda precisam ser comparados por
+um canal confiável para detectar MITM entre peers.
+
 ### Na história
 
 As cenas 4 e 5: Bruno chega depois de Alice, e o servidor usa o interfone
@@ -51,11 +61,24 @@ demonstração dos ataques de bitflip e replay, que pertence à etapa 8.
 
 ## Como executar
 
-Na pasta `tp3/`, com dependências instaladas (`pip install -r requirements.txt`):
+Na pasta `tp3/`, gere uma chave e certificado locais (a chave privada não deve
+ser versionada), copie o certificado público para o pin do cliente e instale as
+dependências:
+
+```sh
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout certs/server.key -out certs/server.crt -days 365 \
+  -subj "/CN=tp3-server"
+cp certs/server.crt client/certs/server.crt
+pip install -r requirements.txt
+```
+
+Inicie o servidor; `--max-connections` configura o limite de conexões TCP
+simultâneas (padrão: 100):
 
 ```sh
 python -m server.handshake_server --host 127.0.0.1 --port 8766 \
-  --cert certs/server.crt --key certs/server.key
+  --cert certs/server.crt --key certs/server.key --max-connections 100
 ```
 
 Em outros terminais, conecte dois ou mais clientes:
@@ -76,8 +99,56 @@ recebem `PEER_LEFT`.
 python -m pytest -q
 ```
 
+## Decisões do protocolo e formatos
+
+- O `client_id` de 16 bytes menor em ordem lexicográfica define A; A envia com
+  `A2B` e B com `B2A`.
+- O salt E2E é `SHA256(salt_do_menor_id || salt_do_maior_id)[:16]`. O servidor
+  distribui `pk` e salt, mas não calcula nem recebe as chaves E2E.
+- `pk_S` é efêmera X25519. O servidor assina
+  `SHA256(pk_S || pk_C || client_id || salt_srv)` diretamente com RSA-PSS e
+  `Prehashed(SHA256)`.
+- Cada frame é `tamanho(4B BE) | tipo(1B) | payload`; o tamanho inclui o tipo.
+  Tipos: `HELLO=0x01`, `SERVER_HELLO=0x02`, `PEER_INFO=0x03`,
+  `PEER_LEFT=0x04`, `E2E=0x05`, `ERROR=0x06`.
+- Frames administrativos carregam `seq(8B) | ciphertext+tag`; o tipo e a
+  sequência são autenticados no AAD. Frames E2E carregam
+  `nonce(12B) | sender_id(16B) | recipient_id(16B) | seq(8B) | ciphertext+tag`;
+  IDs e sequência também entram no AAD.
+- O limite de 4096 bytes deixa margem para cabeçalho, nonce e tag dentro de
+  `MAX_FRAME=8192`, além de limitar o tamanho de cada alocação e mensagem da
+  demonstração.
+- O servidor autentica o cliente para si, mas não autentica peers entre si.
+  Um servidor malicioso pode substituir chaves públicas; compare os
+  fingerprints `SHA256(pk)[:8]` fora da banda.
+
+```mermaid
+sequenceDiagram
+    participant A as Alice
+    participant S as Servidor
+    participant B as Bruno
+    A->>S: HELLO(client_id, pk_C)
+    S-->>A: SERVER_HELLO(pk_S, salt, assinatura, cert)
+    A->>S: Deriva canal C2S/S2C e registra sessão
+    B->>S: HELLO e handshake autenticado
+    S-->>A: PEER_INFO cifrado(B: pk, salt)
+    S-->>B: PEER_INFO cifrado(A: pk, salt)
+    Note over A,B: Derivam A2B/B2A localmente
+    A->>S: E2E cifrado com nonce, IDs e seq
+    S->>B: Mesmo frame E2E, sem alteração
+    B->>B: Verifica seq e tag; então decifra
+```
+
 Para demonstrar rejeições, inicie um cliente com `--attack bitflip` ou
 `--attack replay` e envie `/to <id_ou_prefixo> mensagem` para outro cliente. O
 primeiro modo altera um bit da tag AES-GCM; o segundo transmite o mesmo frame
 duas vezes. O cliente destinatário rejeita o frame afetado e mantém a sessão
 ativa.
+
+Para executar a apresentação automatizada com três clientes e os três ataques
+(bitflip, replay e framing inválido), usando o handler real do servidor sobre
+streams locais em memória:
+
+```sh
+python scripts/demo.py
+```
