@@ -152,3 +152,32 @@ streams locais em memória:
 ```sh
 python scripts/demo.py
 ```
+
+## Interface web de estudo
+
+A interface inicia uma instância local real do relay, cria clientes TCP com
+handshakes autenticados, mostra o rendezvous e permite enviar mensagens E2E ou
+demonstrar bitflip, replay e framing inválido. As ações são apresentadas como
+uma sequência com delay ajustável; desconectar um cliente também mostra a
+notificação `PEER_LEFT`. O servidor e sua chave RSA de demonstração são criados
+em memória, sem gravar chave privada em disco.
+
+Nota: para deixar o laboratório simples de controlar, a interface hospeda os
+clientes e o relay no mesmo processo Python. A tabela de sessões do relay não
+recebe as chaves E2E, mas isso não cria isolamento de processo contra o
+operador local; use a interface para estudar o fluxo, não como implantação de
+produção.
+
+```sh
+cd tp3
+python -m web.app
+```
+
+Abra o endereço impresso no terminal (normalmente <http://127.0.0.1:8080>).
+Se a porta estiver ocupada, a interface tenta as próximas 20 portas; também é
+possível escolher uma porta inicial com `python -m web.app --port 8090`. Use
+**Iniciar servidor**, adicione Alice e Bruno, espere o rendezvous e envie uma
+mensagem pelo painel. O controle de delay muda
+o ritmo dos eventos visuais; ele não altera os timers ou contadores do
+protocolo. A interface fica vinculada a `127.0.0.1` e o servidor de mensagens
+usa uma porta local efêmera.

@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f5f7fa">
+  <title>TP3 · Laboratório E2E</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fa;
+      --surface: #fff;
+      --ink: #18212f;
+      --muted: #718096;
+      --line: #e6ebf1;
+      --blue: #4768f5;
+      --blue-soft: #eef1ff;
+      --mint: #15866c;
+      --mint-soft: #eaf7f3;
+      --amber: #b97813;
+      --amber-soft: #fff5e5;
+      --red: #c94d56;
+      --red-soft: #fff0f0;
+      --shadow: 0 12px 36px rgba(31, 49, 79, .055);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); }
+    button, input, textarea, select { font: inherit; }
+    button { cursor: pointer; }
+    .shell { max-width: 1520px; margin: 0 auto; padding: 0 34px 38px; }
+    .topbar { height: 74px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; align-items: center; gap: 11px; font-size: 14px; font-weight: 750; letter-spacing: -.02em; }
+    .brand-mark { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; color: white; background: linear-gradient(145deg,#617eff,#3856df); box-shadow: 0 5px 12px #4768f533; }
+    .brand-mark svg { width: 19px; height: 19px; }
+    .brand small { display: block; color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .11em; margin-top: 2px; }
+    .top-meta { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
+    .local-tag { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; background: #fff; }
+    .local-tag i, .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #a8b3c2; }
+    .local-tag i { background: #42a88c; box-shadow: 0 0 0 3px #42a88c1f; }
+    .hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; padding: 34px 0 27px; }
+    .eyebrow { color: var(--blue); font-size: 10px; letter-spacing: .15em; font-weight: 800; text-transform: uppercase; }
+    h1 { margin: 9px 0 8px; font-size: clamp(28px,3.2vw,39px); line-height: 1.08; letter-spacing: -.055em; }
+    .hero p { margin: 0; color: var(--muted); font-size: 14px; max-width: 600px; line-height: 1.55; }
+    .server-control { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
+    .server-state { display: inline-flex; align-items: center; gap: 8px; padding: 0 13px; height: 40px; color: #647184; background: #fff; border: 1px solid var(--line); border-radius: 10px; font-size: 12px; }
+    .server-state.live { color: var(--mint); border-color: #bde7db; background: #f4fcf9; }
+    .server-state.live .status-dot { background: #26a47f; box-shadow: 0 0 0 3px #26a47f21; }
+    .btn { border: 1px solid transparent; border-radius: 10px; min-height: 40px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; font-weight: 700; transition: .16s ease; }
+    .btn:hover { transform: translateY(-1px); filter: brightness(.985); }
+    .btn:disabled { cursor: not-allowed; opacity: .5; transform: none; }
+    .btn-primary { background: var(--blue); color: #fff; box-shadow: 0 5px 12px #4768f52c; }
+    .btn-secondary { background: #fff; color: #38475b; border-color: var(--line); }
+    .btn-danger { color: var(--red); background: var(--red-soft); border-color: #f7d8da; }
+    .btn svg { width: 15px; height: 15px; }
+    .metrics { display: grid; grid-template-columns: repeat(4,1fr); gap: 13px; margin-bottom: 17px; }
+    .metric { min-height: 80px; background: var(--surface); border: 1px solid var(--line); border-radius: 13px; padding: 15px 17px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 3px 12px #1f314708; }
+    .metric-label { color: var(--muted); font-size: 11px; font-weight: 650; }
+    .metric-value { font-size: 24px; font-weight: 760; letter-spacing: -.05em; margin-top: 3px; }
+    .metric-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: var(--blue-soft); color: var(--blue); }
+    .metric:nth-child(2) .metric-icon { background: var(--mint-soft); color: var(--mint); }
+    .metric:nth-child(3) .metric-icon { background: #f4efff; color: #8a5fe8; }
+    .metric:nth-child(4) .metric-icon { background: var(--amber-soft); color: var(--amber); }
+    .metric-icon svg { width: 17px; height: 17px; }
+    .workspace { display: grid; grid-template-columns: 280px minmax(400px,1fr) 320px; gap: 15px; align-items: start; }
+    .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+    .panel-head { padding: 17px 18px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .panel-title { font-size: 13px; font-weight: 750; letter-spacing: -.015em; }
+    .panel-subtitle { color: var(--muted); font-size: 10px; margin-top: 4px; }
+    .step-count { color: #7d8a9b; font-size: 10px; font-weight: 650; }
+    .control-body { padding: 15px; }
+    .control-block + .control-block { border-top: 1px solid var(--line); padding-top: 15px; margin-top: 15px; }
+    .control-label { display: block; font-size: 10px; color: #68778b; font-weight: 750; letter-spacing: .04em; margin-bottom: 8px; }
+    .field, .select, .message-input { width: 100%; border: 1px solid #e1e7ef; background: #fbfcfe; border-radius: 9px; padding: 10px 11px; color: var(--ink); font-size: 12px; outline: none; }
+    .field:focus, .select:focus, .message-input:focus { border-color: #98a8ff; box-shadow: 0 0 0 3px #4768f514; }
+    .field-row { display: flex; gap: 7px; }
+    .field-row .field { min-width: 0; }
+    .field-row .btn { flex: 0 0 auto; padding: 0 11px; }
+    .client-list { display: grid; gap: 7px; margin-top: 11px; }
+    .client-empty { font-size: 11px; color: #98a3b2; padding: 8px 2px 2px; }
+    .client-item { display: flex; align-items: center; gap: 9px; border: 1px solid #edf0f4; border-radius: 10px; padding: 9px; }
+    .avatar { width: 29px; height: 29px; flex: 0 0 29px; display: grid; place-items: center; border-radius: 9px; color: var(--blue); background: #eff2ff; font-size: 11px; font-weight: 800; }
+    .client-item:nth-child(2n) .avatar { color: #15866c; background: #eaf7f3; }
+    .client-name { font-size: 11px; font-weight: 730; }
+    .client-id { font-size: 9px; color: #8996a7; margin-top: 3px; font-family: ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .client-fp { color: #8793a2; font-size: 9px; font-family: ui-monospace,SFMono-Regular,Menlo,monospace; margin-left: auto; text-align: right; }
+    .client-remove { flex: 0 0 auto; border: 0; color: #a0aab8; background: transparent; font-size: 16px; line-height: 1; padding: 3px; }
+    .client-remove:hover { color: var(--red); }
+    .selects { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .select-wrap { min-width: 0; }
+    .select-wrap .control-label { margin-bottom: 5px; }
+    .select { padding: 9px 8px; font-size: 11px; }
+    .message-input { resize: vertical; min-height: 68px; margin-top: 8px; line-height: 1.4; }
+    .attack-row { display: flex; gap: 6px; margin-top: 8px; }
+    .attack-btn { flex: 1; border: 1px solid var(--line); color: #647184; background: white; border-radius: 8px; padding: 7px 5px; font-size: 10px; font-weight: 700; }
+    .attack-btn.active { color: var(--amber); background: var(--amber-soft); border-color: #f0d49c; }
+    .attack-btn[data-attack="normal"].active { color: var(--blue); background: var(--blue-soft); border-color: #cfd7ff; }
+    .send-btn { width: 100%; margin-top: 8px; }
+    .hint { font-size: 10px; color: #98a3b2; line-height: 1.5; margin-top: 8px; }
+    .diagram-body { padding: 15px 16px 16px; }
+    .lanes { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin: 0 2px 11px; }
+    .lane { color: #5d6b7e; font-size: 10px; font-weight: 750; }
+    .lane span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 8px; background: #f5f7fb; }
+    .lane .lane-dot { width: 6px; height: 6px; background: var(--blue); border-radius: 50%; }
+    .lane:nth-child(2) .lane-dot { background: #8b69dd; }
+    .lane:nth-child(3) .lane-dot { background: #1a9a7a; }
+    .flow-map { position: relative; display: grid; grid-template-columns: 1fr 1fr 1fr; min-height: 95px; margin-bottom: 14px; border: 1px solid #edf0f5; border-radius: 11px; background: linear-gradient(#fff,#fcfdff); overflow: hidden; }
+    .flow-col { position: relative; min-height: 95px; border-right: 1px dashed #e8edf3; }
+    .flow-col:last-child { border: 0; }
+    .flow-col:after { content:""; position: absolute; left: 50%; top: 0; bottom: 0; border-left: 1px dashed #e9edf3; z-index: 0; }
+    .flow-badge { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 1; border: 1px solid #dfe6f0; background: #fff; border-radius: 8px; padding: 6px 8px; color: #728096; font-size: 9px; white-space: nowrap; }
+    .flow-badge.active { color: var(--blue); border-color: #bfcaff; background: var(--blue-soft); box-shadow: 0 0 0 4px #eef1ff; }
+    .flow-arrow { position: absolute; z-index: 2; left: 15%; right: 15%; top: 50%; height: 1px; background: #b8c4d4; }
+    .flow-arrow:after { content:""; position: absolute; right: -1px; top: -3px; border-left: 6px solid #98a7bb; border-top: 3px solid transparent; border-bottom: 3px solid transparent; }
+    .flow-arrow.reverse { transform: rotate(180deg); }
+    .flow-arrow .flow-label { position: absolute; left: 50%; top: -17px; transform: translateX(-50%); color: #7b899b; background: #fff; padding: 0 5px; font-size: 8px; white-space: nowrap; }
+    .flow-arrow.encrypted { background: #8295f5; height: 2px; }
+    .flow-arrow.encrypted:after { border-left-color: var(--blue); }
+    .flow-arrow.encrypted .flow-label { color: var(--blue); }
+    .sequence-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 1px 9px; }
+    .sequence-title strong { font-size: 11px; }
+    .sequence-title span { color: #8a97a7; font-size: 9px; }
+    .event-list { max-height: 530px; min-height: 280px; overflow: auto; padding-right: 3px; display: flex; flex-direction: column; gap: 8px; scroll-behavior: smooth; }
+    .event { border: 1px solid #e9edf3; border-radius: 10px; padding: 10px 11px; display: grid; grid-template-columns: 24px 1fr auto; gap: 9px; background: #fff; animation: arrive .28s ease both; }
+    @keyframes arrive { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    .event-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; background: var(--blue-soft); color: var(--blue); font-size: 10px; font-weight: 800; }
+    .event[data-kind="derive"] .event-icon, .event[data-kind="rendezvous"] .event-icon { background: var(--mint-soft); color: var(--mint); }
+    .event[data-kind="reject"] .event-icon, .event[data-kind="framing"] .event-icon, .event[data-severity="warning"] .event-icon { background: var(--amber-soft); color: var(--amber); }
+    .event[data-kind="message"] .event-icon { background: #f3edff; color: #895fda; }
+    .event-title { font-size: 10px; font-weight: 750; line-height: 1.35; }
+    .event-detail { margin-top: 4px; color: #7c8999; font-size: 10px; line-height: 1.45; word-break: break-word; }
+    .event-time { color: #a3adba; font-size: 9px; font-family: ui-monospace,monospace; padding-top: 2px; }
+    .empty-events { height: 180px; display: grid; place-items: center; text-align: center; color: #9aa5b4; font-size: 11px; line-height: 1.6; border: 1px dashed #e2e7ee; border-radius: 10px; }
+    .empty-events b { display: block; color: #738197; font-size: 12px; margin-bottom: 3px; }
+    .flow-controls { display: flex; align-items: center; gap: 8px; }
+    .speed { width: 76px; accent-color: var(--blue); }
+    .speed-label { color: #8793a2; font-size: 9px; white-space: nowrap; }
+    .inspector-body { padding: 15px; }
+    .callout { border-radius: 10px; background: #f7f8ff; border: 1px solid #e4e8ff; padding: 12px; margin-bottom: 11px; }
+    .callout strong { display: block; font-size: 10px; color: #4b60c8; margin-bottom: 5px; }
+    .callout p { margin: 0; font-size: 10px; line-height: 1.5; color: #687691; }
+    .formula { padding: 10px 11px; border-radius: 9px; background: #f8fafc; border: 1px solid #edf0f4; color: #4d5d72; font-family: ui-monospace,SFMono-Regular,Menlo,monospace; font-size: 9px; line-height: 1.65; overflow-wrap: anywhere; }
+    .formula + .formula { margin-top: 7px; }
+    .formula b { color: #384b69; }
+    .mini-heading { font-size: 10px; font-weight: 750; margin: 15px 0 8px; }
+    .peer-list { display: grid; gap: 7px; }
+    .peer-empty { font-size: 10px; color: #9aa5b4; padding: 5px 0; }
+    .peer-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f0f2f5; padding: 7px 0; }
+    .peer-avatar { width: 23px; height: 23px; border-radius: 7px; display: grid; place-items: center; color: var(--mint); background: var(--mint-soft); font-size: 9px; font-weight: 800; }
+    .peer-row strong { font-size: 10px; }
+    .peer-row small { display: block; color: #8d99a8; font-size: 9px; margin-top: 2px; font-family: ui-monospace,monospace; }
+    .security-note { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; color: #7a8798; font-size: 9px; line-height: 1.55; }
+    .security-note b { color: #536276; }
+    .footer-note { display: flex; align-items: center; justify-content: space-between; gap: 15px; color: #939eac; font-size: 9px; padding: 16px 2px 0; }
+    .toast { position: fixed; right: 24px; bottom: 22px; max-width: 360px; background: #1e2939; color: white; border-radius: 10px; padding: 12px 15px; font-size: 12px; box-shadow: 0 12px 30px #14203335; opacity: 0; transform: translateY(9px); pointer-events: none; transition: .2s ease; z-index: 5; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 1180px) { .workspace { grid-template-columns: 255px minmax(360px,1fr); } .inspector { grid-column: 1 / -1; } .inspector .inspector-body { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; } .mini-heading { margin-top: 0; } .security-note { margin-top: 0; border-top: 0; padding-top: 0; } }
+    @media (max-width: 760px) { .shell { padding: 0 16px 25px; } .topbar { height: 62px; } .hero { align-items: flex-start; flex-direction: column; padding: 25px 0 20px; } .server-control { justify-content: flex-start; } .metrics { grid-template-columns: 1fr 1fr; gap: 8px; } .metric { min-height: 70px; padding: 12px; } .workspace { grid-template-columns: 1fr; } .inspector { grid-column: auto; } .inspector .inspector-body { display: block; } .mini-heading { margin-top: 15px; } .security-note { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; } .event-list { max-height: 430px; } .top-meta .local-tag { display: none; } }
+    @media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3 19 6v5.2c0 4.7-3 7.7-7 9.8-4-2.1-7-5.1-7-9.8V6l7-3Z" stroke="currentColor" stroke-width="1.7"/><path d="m9 12 2 2 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div>TP3 <small>SECURE MESSAGING LAB</small></div>
+      </div>
+      <div class="top-meta"><span>Segurança da Informação</span><span class="local-tag"><i></i> Laboratório local</span></div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <div class="eyebrow">Fluxo do protocolo · visualização interativa</div>
+        <h1>Veja a segurança acontecer.</h1>
+        <p>Execute o handshake, acompanhe o rendezvous e observe Alice e Bruno trocarem mensagens que só o destinatário consegue abrir.</p>
+      </div>
+      <div class="server-control">
+        <div class="server-state" id="serverState"><i class="status-dot"></i><span>Servidor parado</span></div>
+        <button class="btn btn-primary" id="serverButton" onclick="toggleServer()"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M7 4.5a.8.8 0 0 1 1.2-.7l7 5a.9.9 0 0 1 0 1.4l-7 5a.8.8 0 0 1-1.2-.7v-10Z"/></svg><span>Iniciar servidor</span></button>
+      </div>
+    </section>
+
+    <section class="metrics" aria-label="Resumo do laboratório">
+      <div class="metric"><div><div class="metric-label">Servidor</div><div class="metric-value" id="metricServer">Parado</div></div><div class="metric-icon"><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="6" rx="2" stroke="currentColor" stroke-width="1.7"/><rect x="4" y="14" width="16" height="6" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div></div>
+      <div class="metric"><div><div class="metric-label">Clientes conectados</div><div class="metric-value" id="metricClients">0</div></div><div class="metric-icon"><svg viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3" stroke="currentColor" stroke-width="1.7"/><path d="M3.5 19c.5-3 2.3-4.5 5.5-4.5s5 1.5 5.5 4.5M17 11a3 3 0 1 0 0-6M17 14.5c2.2 0 3.5 1.5 4 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div></div>
+      <div class="metric"><div><div class="metric-label">Pares com chaves E2E</div><div class="metric-value" id="metricPairs">0</div></div><div class="metric-icon"><svg viewBox="0 0 24 24" fill="none"><path d="M7 14a4 4 0 1 1 3.8-5.2L21 8.8v3l-2 .5v2h-3v-2l-5.2-.8A4 4 0 0 1 7 14Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="7" cy="10" r=".7" fill="currentColor"/></svg></div></div>
+      <div class="metric"><div><div class="metric-label">Frames observados</div><div class="metric-value" id="metricFrames">0</div></div><div class="metric-icon"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="18" cy="12" r="2" fill="currentColor"/></svg></div></div>
+    </section>
+
+    <main class="workspace">
+      <aside class="panel controls">
+        <div class="panel-head"><div><div class="panel-title">Painel de controle</div><div class="panel-subtitle">Crie participantes e envie frames</div></div><span class="step-count">01 — 03</span></div>
+        <div class="control-body">
+          <section class="control-block">
+            <label class="control-label" for="clientName">PARTICIPANTES</label>
+            <div class="field-row"><input class="field" id="clientName" placeholder="Ex.: Alice" maxlength="28"><button class="btn btn-secondary" id="addClientButton" onclick="addClient()" disabled>+ Cliente</button></div>
+            <div class="client-list" id="clientList"><div class="client-empty">Inicie o servidor para adicionar Alice e Bruno.</div></div>
+          </section>
+          <section class="control-block">
+            <label class="control-label">MENSAGEM E2E</label>
+            <div class="selects"><div class="select-wrap"><label class="control-label" for="senderSelect">REMETENTE</label><select class="select" id="senderSelect"></select></div><div class="select-wrap"><label class="control-label" for="recipientSelect">DESTINATÁRIO</label><select class="select" id="recipientSelect"></select></div></div>
+            <textarea class="message-input" id="messageText" maxlength="4096" placeholder="Escreva uma mensagem para o outro cliente…"></textarea>
+            <div class="attack-row" role="group" aria-label="Modo de envio"><button class="attack-btn active" data-attack="normal" onclick="chooseAttack('normal')">Normal</button><button class="attack-btn" data-attack="bitflip" onclick="chooseAttack('bitflip')">Bitflip</button><button class="attack-btn" data-attack="replay" onclick="chooseAttack('replay')">Replay</button></div>
+            <button class="btn btn-primary send-btn" id="sendButton" onclick="sendMessage()" disabled>Enviar mensagem E2E <span aria-hidden="true">↗</span></button>
+            <div class="hint">Bitflip altera a tag GCM. Replay transmite o mesmo frame duas vezes. O contador avança apenas após autenticação válida.</div>
+          </section>
+          <section class="control-block">
+            <label class="control-label">ROBUSTEZ DO FRAMING</label>
+            <button class="btn btn-secondary" id="framingButton" onclick="sendBadFrame()" disabled style="width:100%">Enviar tamanho inválido</button>
+            <div class="hint">O relay fecha apenas a conexão que declarou um tamanho acima de MAX_FRAME.</div>
+          </section>
+        </div>
+      </aside>
+
+      <section class="panel diagram">
+        <div class="panel-head">
+          <div><div class="panel-title">Sequência do protocolo</div><div class="panel-subtitle">As ações reais aparecem com intervalo para facilitar o estudo</div></div>
+          <div class="flow-controls"><span class="speed-label">Delay</span><input class="speed" id="delayInput" type="range" min="250" max="1800" step="50" value="850" aria-label="Delay da animação"><span class="speed-label" id="delayValue">0,85 s</span></div>
+        </div>
+        <div class="diagram-body">
+          <div class="lanes"><div class="lane"><span><i class="lane-dot"></i><b id="laneAlice">Alice</b></span></div><div class="lane"><span><i class="lane-dot"></i>Servidor relay</span></div><div class="lane"><span><i class="lane-dot"></i><b id="laneBruno">Bruno</b></span></div></div>
+          <div class="flow-map" id="flowMap" aria-label="Diagrama de sequência">
+            <div class="flow-col"><span class="flow-badge" id="aliceBadge">cliente A</span></div><div class="flow-col"><span class="flow-badge" id="serverBadge">aguardando</span></div><div class="flow-col"><span class="flow-badge" id="brunoBadge">cliente B</span></div>
+            <div class="flow-arrow" id="flowArrow" hidden><span class="flow-label" id="flowLabel"></span></div>
+          </div>
+          <div class="sequence-title"><strong>Eventos observados</strong><span id="eventCount">0 ações</span></div>
+          <div class="event-list" id="eventList"><div class="empty-events"><div><b>A sequência começa aqui</b>Inicie o servidor e crie o primeiro cliente.</div></div></div>
+        </div>
+      </section>
+
+      <aside class="panel inspector">
+        <div class="panel-head"><div><div class="panel-title">O que está protegido?</div><div class="panel-subtitle">Resumo criptográfico sem revelar segredos</div></div><span class="step-count">INFO</span></div>
+        <div class="inspector-body">
+          <div>
+            <div class="callout"><strong>Handshake servidor ↔ cliente</strong><p>RSA-PSS autentica o certificado pinado e a chave X25519 efêmera do servidor. ECDH deriva as chaves administrativas em cada direção. A chave RSA assina; o segredo de sessão vem das chaves efêmeras.</p></div>
+            <div class="formula"><b>E2E:</b><br>Z_AB = ECDH(sk_A, pk_B)<br>salt_par = SHA256(salt_menor_ID ‖ salt_maior_ID)[:16]<br>HKDF → A2B e B2A</div>
+            <div class="formula"><b>Frame:</b><br>nonce = IV_base(4) ‖ seq(8)<br>sender(16) | recipient(16) | seq(8)<br>ciphertext ‖ tag(16)</div>
+          </div>
+          <div>
+            <div class="mini-heading">Pares conhecidos</div>
+            <div class="peer-list" id="peerList"><div class="peer-empty">Os pares aparecem após o rendezvous.</div></div>
+          </div>
+          <div class="security-note"><b>Nota de segurança</b><br>As sessões do relay não guardam chaves E2E. Para facilitar a aula, clientes e servidor são controlados pelo mesmo processo local; isto não é isolamento de processos nem uso de produção. A distribuição de pk dos peers não é autenticada ponta a ponta; compare fingerprints fora de banda para detectar MITM.</div>
+        </div>
+      </aside>
+    </main>
+    <div class="footer-note"><span>TP3 · Mensageria segura multi-cliente · demonstração local</span><span>Chaves privadas e segredos não são exibidos</span></div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script>
+    const state = { running: false, clients: [], events: [], messages: [], seen: new Set(), queue: [], playing: false, attack: null, frames: 0 };
+    const $ = (id) => document.getElementById(id);
+    const glyph = { server:"S", handshake:"↔", admin:"⌑", session:"▦", rendezvous:"↔", derive:"⌘", relay:"→", message:"✓", reject:"!", framing:"×", disconnect:"−" };
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    async function api(path, body) {
+      const response = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: {"Content-Type":"application/json"}, body: body === undefined ? undefined : JSON.stringify(body) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "A ação falhou.");
+      return data;
+    }
+    function toast(message) { const el = $("toast"); el.textContent = message; el.classList.add("show"); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove("show"), 2900); }
+    function escapeText(value) { return String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+    async function toggleServer() {
+      try {
+        if (state.running) { await api("/api/server/stop", {}); state.seen.clear(); state.queue.length = 0; }
+        else await api("/api/server/start", {});
+        await refresh();
+      } catch (error) { toast(error.message); }
+    }
+    async function addClient() {
+      const count = state.clients.length;
+      const input = $("clientName");
+      const label = input.value.trim() || ["Alice", "Bruno", "Carla", "Diego", "Eva"][count] || `Cliente ${count + 1}`;
+      $("addClientButton").disabled = true;
+      try { await api("/api/clients", {label}); input.value = ""; await refresh(); }
+      catch (error) { toast(error.message); }
+      finally { updateControls(); }
+    }
+    async function disconnectClient(id) {
+      try { await api("/api/clients/disconnect", {id}); await refresh(); toast("Cliente desconectado; PEER_LEFT foi distribuído."); }
+      catch (error) { toast(error.message); }
+    }
+    async function sendMessage() {
+      const sender = $("senderSelect").value, recipient = $("recipientSelect").value, text = $("messageText").value;
+      if (!sender || !recipient || sender === recipient) { toast("Escolha dois clientes diferentes."); return; }
+      if (!text.trim()) { toast("Escreva uma mensagem primeiro."); return; }
+      $("sendButton").disabled = true;
+      try {
+        await api("/api/messages", {sender, recipient, text, attack: state.attack});
+        state.frames += state.attack === "replay" ? 2 : 1;
+        $("messageText").value = "";
+        toast(state.attack === "normal" || !state.attack ? "Frame enviado ao relay." : `Ataque ${state.attack} transmitido.`);
+        await refresh();
+      } catch (error) { toast(error.message); }
+      finally { updateControls(); }
+    }
+    async function sendBadFrame() {
+      $("framingButton").disabled = true;
+      try { await api("/api/framing/invalid", {}); state.frames++; toast("O servidor encerrou a conexão de framing inválido."); await refresh(); }
+      catch (error) { toast(error.message); }
+      finally { updateControls(); }
+    }
+    function chooseAttack(attack) {
+      state.attack = attack === "normal" ? null : attack;
+      document.querySelectorAll(".attack-btn").forEach(button => button.classList.toggle("active", button.dataset.attack === attack));
+    }
+
+    async function refresh() {
+      try {
+        const snapshot = await api("/api/state");
+        state.running = snapshot.running;
+        state.clients = snapshot.clients;
+        state.messages = snapshot.messages;
+        const unseen = snapshot.events.filter(event => !state.seen.has(event.id));
+        unseen.forEach(event => { state.seen.add(event.id); state.queue.push(event); });
+        renderState(snapshot);
+        drainEvents();
+      } catch (error) { /* Keep the last view while the local service starts. */ }
+    }
+    async function drainEvents() {
+      if (state.playing) return;
+      state.playing = true;
+      while (state.queue.length) {
+        const event = state.queue.shift();
+        renderEvent(event);
+        await animateFlow(event);
+        await sleep(Number($("delayInput").value));
+      }
+      state.playing = false;
+    }
+    function renderState(snapshot) {
+      const serverState = $("serverState");
+      serverState.classList.toggle("live", snapshot.running);
+      serverState.innerHTML = `<i class="status-dot"></i><span>${snapshot.running ? `Relay ativo · :${snapshot.port}` : "Servidor parado"}</span>`;
+      $("serverButton").className = `btn ${snapshot.running ? "btn-danger" : "btn-primary"}`;
+      $("serverButton").innerHTML = snapshot.running ? "■ <span>Parar servidor</span>" : "▶ <span>Iniciar servidor</span>";
+      $("metricServer").textContent = snapshot.running ? "Ativo" : "Parado";
+      $("metricClients").textContent = snapshot.clients.length;
+      const pairs = new Set();
+      snapshot.clients.forEach(client => client.peers.forEach(peer => pairs.add([client.id, peer].sort().join(":"))));
+      $("metricPairs").textContent = pairs.size;
+      $("metricFrames").textContent = state.frames;
+      renderClients(snapshot.clients);
+      renderPeers(snapshot.clients);
+      updateControls();
+    }
+    function renderClients(clients) {
+      const list = $("clientList");
+      if (!clients.length) list.innerHTML = `<div class="client-empty">${state.running ? "Adicione Alice e Bruno para começar o rendezvous." : "Inicie o servidor para adicionar Alice e Bruno."}</div>`;
+      else list.innerHTML = clients.map(client => `<div class="client-item"><div class="avatar">${escapeText(client.label.slice(0,1).toUpperCase())}</div><div><div class="client-name">${escapeText(client.label)}</div><div class="client-id">${client.uuid.slice(0,18)}…</div></div><div class="client-fp">SHA-256<br>${escapeText(client.fingerprint)}</div><button class="client-remove" title="Desconectar ${escapeText(client.label)}" onclick="disconnectClient('${client.id}')">×</button></div>`).join("");
+      const oldSender = $("senderSelect").value, oldRecipient = $("recipientSelect").value;
+      const options = clients.map(client => `<option value="${client.id}">${escapeText(client.label)}</option>`).join("");
+      $("senderSelect").innerHTML = options || `<option value="">—</option>`;
+      $("recipientSelect").innerHTML = options || `<option value="">—</option>`;
+      if (clients.some(client => client.id === oldSender)) $("senderSelect").value = oldSender;
+      if (clients.some(client => client.id === oldRecipient)) $("recipientSelect").value = oldRecipient;
+      if (clients.length > 1 && $("senderSelect").value === $("recipientSelect").value) $("recipientSelect").selectedIndex = 1;
+      $("laneAlice").textContent = clients[0]?.label || "Alice";
+      $("laneBruno").textContent = clients[1]?.label || "Bruno";
+    }
+    function renderPeers(clients) {
+      const list = $("peerList");
+      const rows = [];
+      clients.forEach(client => client.peers.forEach(id => {
+        const peer = clients.find(candidate => candidate.id === id);
+        if (peer && client.id < id) rows.push(`<div class="peer-row"><div class="peer-avatar">↔</div><div><strong>${escapeText(client.label)} ↔ ${escapeText(peer.label)}</strong><small>A2B / B2A prontos localmente</small></div></div>`);
+      }));
+      list.innerHTML = rows.join("") || `<div class="peer-empty">Os pares aparecem após o rendezvous.</div>`;
+    }
+    function renderEvent(event) {
+      const list = $("eventList");
+      const empty = list.querySelector(".empty-events"); if (empty) empty.remove();
+      const row = document.createElement("article");
+      row.className = "event"; row.dataset.kind = event.kind; row.dataset.severity = event.severity;
+      const icon = document.createElement("span"); icon.className = "event-icon"; icon.textContent = glyph[event.kind] || "·";
+      const copy = document.createElement("div");
+      const title = document.createElement("div"); title.className = "event-title"; title.textContent = event.title;
+      const detail = document.createElement("div"); detail.className = "event-detail"; detail.textContent = event.detail;
+      copy.append(title, detail);
+      const time = document.createElement("time"); time.className = "event-time"; time.textContent = event.time;
+      row.append(icon, copy, time); list.append(row); list.scrollTop = list.scrollHeight;
+      $("eventCount").textContent = `${list.querySelectorAll(".event").length} ações`;
+    }
+    async function animateFlow(event) {
+      const from = event.actor || "Cliente", kind = event.kind;
+      let label = event.title;
+      if (kind === "handshake") label = "HELLO / SERVER_HELLO";
+      if (kind === "rendezvous") label = "PEER_INFO cifrado";
+      if (kind === "derive") label = "ECDH + HKDF local";
+      if (kind === "relay") label = "E2E · bytes opacos";
+      if (kind === "message") label = "Tag válida · plaintext";
+      const arrow = $("flowArrow"); arrow.hidden = false;
+      const left = from === "Alice" || from === state.clients[0]?.label;
+      const right = from === state.clients[1]?.label || (event.peer_id && state.clients[1]?.id === event.peer_id);
+      const server = from === "Servidor";
+      arrow.className = `flow-arrow ${server || right || kind === "rendezvous" ? "reverse" : ""} ${["rendezvous","derive","relay","admin"].includes(kind) ? "encrypted" : ""}`;
+      $("flowLabel").textContent = label;
+      $("serverBadge").textContent = kind === "relay" ? "encaminhando" : kind === "handshake" ? "autenticando" : "relay";
+      $("serverBadge").classList.toggle("active", server || kind === "relay" || kind === "handshake");
+      $("aliceBadge").classList.toggle("active", left && !server);
+      $("brunoBadge").classList.toggle("active", right);
+      await sleep(120);
+      $("serverBadge").classList.remove("active"); $("aliceBadge").classList.remove("active"); $("brunoBadge").classList.remove("active");
+    }
+    function updateControls() {
+      const active = state.running;
+      $("addClientButton").disabled = !active || state.clients.length >= 32;
+      $("sendButton").disabled = !active || state.clients.length < 2;
+      $("framingButton").disabled = !active;
+    }
+
+    $("delayInput").addEventListener("input", event => { $("delayValue").textContent = `${(Number(event.target.value)/1000).toFixed(2).replace(".",",")} s`; });
+    $("messageText").addEventListener("keydown", event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") sendMessage(); });
+    setInterval(() => { if (state.running) refresh(); }, 350);
+    refresh();
+  </script>
+</body>
+</html>
