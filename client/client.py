@@ -34,6 +34,7 @@ from common.protocol import (
     HELLO,
     PEER_INFO,
     PEER_LEFT,
+    REGISTERED,
     SERVER_HELLO,
     decode_peer_info,
     decode_peer_left,
@@ -101,7 +102,7 @@ def apply_peer_event(
         known_peers.pop(peer_id, None)
         peers.pop(peer_id, None)
         return peer_id, "left"
-    if message_type == ERROR:
+    if message_type in (ERROR, REGISTERED):
         return None
     raise ValueError(f"unexpected administrative message 0x{message_type:02x}")
 
@@ -280,7 +281,7 @@ async def establish_admin_channel(handshake: ClientHandshake) -> AdminClientConn
             direction_recv=1,
         )
         message_type, plaintext, _seq = await channel.recv_admin()
-        if message_type != ERROR:
+        if message_type != REGISTERED:
             raise HandshakeError("server did not send the registration confirmation")
         return AdminClientConnection(
             channel=channel, confirmation=plaintext, known_peers={}, peers={}

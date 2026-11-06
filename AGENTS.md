@@ -60,6 +60,7 @@ Tipos:
 0x04 PEER_LEFT     servidor -> cliente   (cifrado no canal administrativo)
 0x05 E2E           cliente -> servidor -> cliente (relay, bytes intactos)
 0x06 ERROR         servidor -> cliente   (cifrado no canal administrativo)
+0x07 REGISTERED    servidor -> cliente   (confirmação cifrada no canal administrativo)
 
 HELLO payload:        client_id (16B) | pk_C (32B)
 SERVER_HELLO payload: pk_S (32B) | salt_srv (16B) | sig_len (2B) | sig | cert_len (2B) | cert (DER)
@@ -73,7 +74,7 @@ E2E payload:          nonce (12B) | sender_id (16B) | recipient_id (16B) | seq_n
                       AAD   = sender_id | recipient_id | seq_no
 ```
 
-Todo frame administrativo (`PEER_INFO`, `PEER_LEFT` e `ERROR`) leva no payload externo `seq (8B BE) | ciphertext+tag`; o plaintext correspondente é o conteúdo indicado acima. O tipo do frame e o `seq` entram no AAD (`type (1B) | seq (8B)`). Assim, IDs, chaves públicas e salts distribuídos por `PEER_INFO` não trafegam em claro. `HELLO` e `SERVER_HELLO` são mensagens de handshake e seguem seus formatos próprios.
+Todo frame administrativo (`PEER_INFO`, `PEER_LEFT`, `ERROR` e `REGISTERED`) leva no payload externo `seq (8B BE) | ciphertext+tag`; o plaintext correspondente é o conteúdo indicado acima. O tipo do frame e o `seq` entram no AAD (`type (1B) | seq (8B)`). Assim, IDs, chaves públicas e salts distribuídos por `PEER_INFO` não trafegam em claro. `HELLO` e `SERVER_HELLO` são mensagens de handshake e seguem seus formatos próprios.
 
 ## Estrutura do projeto
 
@@ -192,7 +193,7 @@ tp3/
 - No fio, toda mensagem administrativa usa `seq (8B BE) | ciphertext+tag`; `type | seq` é o AAD. O servidor só envia a confirmação cifrada depois de derivar as chaves administrativas; o cliente só a decifra depois de validar certificado e assinatura e derivar as mesmas chaves.
 - Ao receber mensagem administrativa, validar a tag antes de atualizar `seq_recv`; rejeitar `seq <= seq_recv` sem avançar o contador.
 - Servidor: criar `sessions[client_id] = {writer, public_key, salt, seq_send=0, seq_recv=-1}` e descartar `sk_S` e `Z_CS` do log.
-- Primeira mensagem de teste: servidor manda um `ERROR` ou confirmação de registro cifrado.
+- Primeira mensagem de teste: servidor manda um `REGISTERED` de confirmação de registro cifrado.
 
 **Testes de aceite**
 - Cliente decifra a confirmação do servidor.

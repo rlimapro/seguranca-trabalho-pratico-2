@@ -140,7 +140,7 @@ python -m pytest -q
   `Prehashed(SHA256)`.
 - Cada frame é `tamanho(4B BE) | tipo(1B) | payload`; o tamanho inclui o tipo.
   Tipos: `HELLO=0x01`, `SERVER_HELLO=0x02`, `PEER_INFO=0x03`,
-  `PEER_LEFT=0x04`, `E2E=0x05`, `ERROR=0x06`.
+  `PEER_LEFT=0x04`, `E2E=0x05`, `ERROR=0x06`, `REGISTERED=0x07`.
 - Frames administrativos carregam `seq(8B) | ciphertext+tag`; o tipo e a
   sequência são autenticados no AAD. Frames E2E carregam
   `nonce(12B) | sender_id(16B) | recipient_id(16B) | seq(8B) | ciphertext+tag`;
@@ -160,6 +160,7 @@ sequenceDiagram
     A->>S: HELLO(client_id, pk_C)
     S-->>A: SERVER_HELLO(pk_S, salt, assinatura, cert)
     A->>S: Deriva canal C2S/S2C e registra sessão
+    S-->>A: REGISTERED cifrado (confirmação, seq=0)
     B->>S: HELLO e handshake autenticado
     S-->>A: PEER_INFO cifrado(B: pk, salt)
     S-->>B: PEER_INFO cifrado(A: pk, salt)

@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from client.client import establish_admin_channel, perform_client_handshake
 from common.admin import AdminChannel, AdminReplayError
-from common.protocol import ERROR
+from common.protocol import ERROR, REGISTERED
 from server.handshake_server import handle_handshake_client
 
 
@@ -85,11 +85,11 @@ class AdminChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((client.seq_send, client.seq_recv), (0, -1))
         self.assertEqual((server.seq_send, server.seq_recv), (0, -1))
 
-        used_seq = await server.send_admin(ERROR, b"Registro confirmado")
+        used_seq = await server.send_admin(REGISTERED, b"Registro confirmado")
         message_type, plaintext, received_seq = await client.recv_admin()
 
         self.assertEqual(used_seq, 0)
-        self.assertEqual((message_type, plaintext, received_seq), (ERROR, b"Registro confirmado", 0))
+        self.assertEqual((message_type, plaintext, received_seq), (REGISTERED, b"Registro confirmado", 0))
         self.assertEqual((server.seq_send, server.seq_recv), (1, -1))
         self.assertEqual((client.seq_send, client.seq_recv), (0, 0))
 

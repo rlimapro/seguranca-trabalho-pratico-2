@@ -26,6 +26,7 @@ from common.protocol import (
     HELLO,
     PEER_INFO,
     PEER_LEFT,
+    REGISTERED,
     SERVER_HELLO,
     decode_hello,
     encode_server_hello,
@@ -245,7 +246,7 @@ async def handle_handshake_client(
             logger.info("handshake autenticado: client_id=%s peer=%s", handshake_client_id.hex(), peer)
             # Keep registration and initial sends atomic with respect to other
             # arrivals so the registration confirmation is always seq 0.
-            await admin.send_admin(ERROR, b"Registro confirmado")
+            await admin.send_admin(REGISTERED, b"Registro confirmado")
             # The new client learns about each existing session, and each
             # existing client learns about the new one. AdminChannel serializes
             # sequence allocation and writes for each connection.

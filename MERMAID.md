@@ -35,7 +35,7 @@ sequenceDiagram
         C->>C: HKDF-SHA256 deriva C2S e S2C
         S->>S: Registra sessão e contadores administrativos
         S->>S: Z_CS = ECDH(sk_S, pk_C), deriva C2S e S2C
-        S->>F: ERROR de confirmação cifrado com AES-128-GCM, seq=0
+        S->>F: REGISTERED de confirmação cifrado com AES-128-GCM, seq=0
         F->>C: Frame administrativo autenticado
         C->>C: Decifra e autentica a confirmação
         Note over C,S: C2S e S2C são chaves diferentes, nonce e tipo/seq entram no protocolo

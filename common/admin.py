@@ -10,9 +10,9 @@ from cryptography.exceptions import InvalidTag
 
 from common.crypto import aes_decrypt, aes_encrypt, build_aad_admin, build_nonce
 from common.framing import recv_frame, send_frame
-from common.protocol import ERROR, PEER_INFO, PEER_LEFT
+from common.protocol import ERROR, PEER_INFO, PEER_LEFT, REGISTERED
 
-ADMIN_TYPES = frozenset((PEER_INFO, PEER_LEFT, ERROR))
+ADMIN_TYPES = frozenset((PEER_INFO, PEER_LEFT, ERROR, REGISTERED))
 _TAG_LENGTH = 16
 _SEQ_LENGTH = 8
 _MAX_SEQ = (1 << 64) - 1
