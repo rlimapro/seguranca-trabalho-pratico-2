@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import colorsys
+import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from html import escape
 
 from asyncio import StreamReader, StreamWriter
 from cryptography import x509
@@ -16,6 +19,10 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from prompt_toolkit import PromptSession
+from prompt_toolkit import print_formatted_text
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.patch_stdout import patch_stdout
 
 from common.admin import ADMIN_TYPES, AdminChannel
 from common.crypto import ecdh, fingerprint, gen_x25519, hkdf_extract_expand
@@ -298,29 +305,74 @@ async def establish_admin_channel(handshake: ClientHandshake) -> AdminClientConn
 async def _run_cli(host: str, port: int, pin_path: str, attack: str | None = None) -> None:
     handshake = await connect_and_handshake(host, port, pin_path)
     admin = await establish_admin_channel(handshake)
-    print(
-        "Handshake autenticado; canal administrativo cifrado. "
-        f"client_id={uuid.UUID(bytes=handshake.client_id)}; "
-        f"confirmação={admin.confirmation.decode('utf-8', errors='replace')}"
+    session = PromptSession()
+    with patch_stdout():
+        _print_cli(
+            "✓  Conectado · handshake autenticado · canal administrativo cifrado",
+            "#22c55e",
+        )
+        _print_cli(
+            f"ID  {uuid.UUID(bytes=handshake.client_id)}   ·   "
+            f"{admin.confirmation.decode('utf-8', errors='replace')}",
+            "#94a3b8",
+        )
+        _print_cli("Use /to <id ou prefixo> <mensagem> · /exit para sair.", "#64748b")
+        if attack is not None:
+            _print_cli(f"⚠  Modo de demonstração ativo · {attack}", "#fbbf24")
+        receiver = asyncio.create_task(_receive_messages(handshake, admin))
+        try:
+            while not receiver.done():
+                try:
+                    command = await session.prompt_async(HTML("<ansigreen>› </ansigreen>"))
+                except EOFError:
+                    break
+                if command.strip().lower() == "/exit":
+                    _print_cli("Até logo.", "#94a3b8")
+                    break
+                try:
+                    peer_id, seq, _payload = await send_to_peer(handshake, admin, command, attack)
+                    action = f" · {attack}" if attack is not None else ""
+                    _print_cli(
+                        f"↗  Enviada para {str(uuid.UUID(bytes=peer_id))[:8]} · #{seq}{action}",
+                        "#fbbf24" if attack is not None else "#60a5fa",
+                    )
+                except (ValueError, UnicodeError) as exc:
+                    _print_cli(f"!  {exc}", "#fbbf24")
+        finally:
+            if not receiver.done():
+                receiver.cancel()
+            await asyncio.gather(receiver, return_exceptions=True)
+            handshake.writer.close()
+            await handshake.writer.wait_closed()
+
+
+def _print_cli(message: str, color: str) -> None:
+    print_formatted_text(HTML(f"<style fg='{color}'>{escape(message)}</style>"))
+
+
+def _print_incoming_message(sender_id: bytes, message: str) -> None:
+    sender = escape(str(uuid.UUID(bytes=sender_id))[:8])
+    body = escape(message)
+    # Hash do ID, em vez do hash() embutido do Python, mantém a cor entre execuções.
+    hue = int.from_bytes(hashlib.sha256(sender_id).digest()[:2], "big") % 360
+    sender_color = _hsl_to_hex(hue, 72, 68)
+    print_formatted_text(
+        HTML(
+            f"<style fg='#2dd4bf'>│</style>  "
+            f"<b><style fg='{sender_color}'>{sender}</style></b>  "
+            f"<style fg='#64748b'>›</style>  {body}"
+        )
     )
-    receiver = asyncio.create_task(_receive_messages(handshake, admin))
-    try:
-        while not receiver.done():
-            try:
-                command = await asyncio.to_thread(input, "tp3> ")
-            except EOFError:
-                break
-            try:
-                peer_id, seq, _payload = await send_to_peer(handshake, admin, command, attack)
-                print(f"Mensagem enviada para {uuid.UUID(bytes=peer_id)} (seq={seq})")
-            except (ValueError, UnicodeError) as exc:
-                print(f"Comando recusado: {exc}")
-    finally:
-        handshake.writer.close()
-        await handshake.writer.wait_closed()
-        if not receiver.done():
-            receiver.cancel()
-        await asyncio.gather(receiver, return_exceptions=True)
+
+
+def _hsl_to_hex(hue: int, saturation: int, lightness: int) -> str:
+    """Convert an HSL color to RGB hex for readable, stable peer colors."""
+    red, green, blue = colorsys.hls_to_rgb(
+        hue / 360, lightness / 100, saturation / 100
+    )
+    return "#{:02x}{:02x}{:02x}".format(
+        round(red * 255), round(green * 255), round(blue * 255)
+    )
 
 
 async def _receive_messages(
@@ -331,11 +383,7 @@ async def _receive_messages(
         try:
             message_type, payload = await recv_frame(handshake.reader)
         except (FrameError, asyncio.IncompleteReadError) as exc:
-            logger.info(
-                "framing inválido; conexão encerrada: client_id=%s motivo=%s",
-                handshake.client_id.hex(),
-                exc,
-            )
+            _print_cli(f"⚠  Conexão encerrada · frame inválido ({exc})", "#f87171")
             handshake.writer.close()
             try:
                 await handshake.writer.wait_closed()
@@ -345,7 +393,7 @@ async def _receive_messages(
         if message_type in ADMIN_TYPES:
             message_type, plaintext, _seq = admin.channel.decode_admin_frame(message_type, payload)
             if message_type == ERROR:
-                print(f"Aviso do servidor: {plaintext.decode('utf-8', errors='replace')}")
+                _print_cli(f"!  Servidor · {plaintext.decode('utf-8', errors='replace')}", "#fbbf24")
                 continue
             event = apply_peer_event(
                 handshake,
@@ -357,29 +405,26 @@ async def _receive_messages(
             if event is not None:
                 peer_id, detail = event
                 if detail == "left":
-                    print(f"Peer saiu: {uuid.UUID(bytes=peer_id)}")
+                    _print_cli(f"←  Peer desconectou · {uuid.UUID(bytes=peer_id)}", "#94a3b8")
                 else:
-                    print(
-                        f"Peer: {uuid.UUID(bytes=peer_id)} fingerprint={detail}; "
-                        "chaves E2E derivadas"
+                    _print_cli(
+                        f"●  Peer pronto · {uuid.UUID(bytes=peer_id)} · fingerprint {detail}",
+                        "#c084fc",
                     )
         elif message_type == E2E:
             try:
                 sender_id, plaintext = receive_e2e(handshake.client_id, admin.peers, payload)
             except E2EReplayError:
-                logger.warning("mensagem E2E rejeitada: client_id=%s motivo=replay", handshake.client_id.hex())
+                _print_cli("⚠  Mensagem rejeitada · replay detectado", "#fbbf24")
                 continue
             except E2EAuthenticationError:
-                logger.warning(
-                    "mensagem E2E rejeitada: client_id=%s motivo=tag inválida",
-                    handshake.client_id.hex(),
-                )
+                _print_cli("⚠  Mensagem rejeitada · autenticação inválida", "#f87171")
                 continue
             except E2EProtocolError as exc:
-                logger.warning("mensagem E2E rejeitada: client_id=%s motivo=%s", handshake.client_id.hex(), exc)
+                _print_cli(f"⚠  Mensagem rejeitada · {exc}", "#fbbf24")
                 continue
             message = plaintext.decode("utf-8", errors="replace")
-            print(f"Mensagem de {uuid.UUID(bytes=sender_id)}: {message}")
+            _print_incoming_message(sender_id, message)
         else:
             raise FrameError(f"tipo de frame inesperado: 0x{message_type:02x}")
 
