@@ -91,6 +91,11 @@ class HandshakeError(ValueError):
     """Raised when the peer sends an invalid handshake message."""
 
 
+def _is_clean_frame_eof(exc: IncompleteReadError) -> bool:
+    """Return whether the peer closed between frames, before a new prefix."""
+    return exc.expected == 4 and not exc.partial
+
+
 @dataclass(frozen=True)
 class ServerHandshake:
     """Per-connection values retained for the following protocol stage."""
@@ -185,6 +190,115 @@ async def perform_server_handshake(
     return session
 
 
+def establish_admin_session(
+    reader: StreamReader,
+    writer: StreamWriter,
+    handshake: ServerHandshake,
+) -> tuple[dict, AdminChannel]:
+    """Derive the administrative keys and build this connection's state."""
+    shared_secret = ecdh(handshake.server_private_key, handshake.client_public_key)
+    key_c2s = hkdf_extract_expand(handshake.salt_srv, shared_secret, b"C2S")
+    key_s2c = hkdf_extract_expand(handshake.salt_srv, shared_secret, b"S2C")
+    del shared_secret
+
+    session = {
+        "writer": writer,
+        "public_key": handshake.client_public_key,
+        "salt": handshake.salt_srv,
+        "seq_send": 0,
+        "seq_recv": -1,
+    }
+    admin = AdminChannel(
+        reader,
+        writer,
+        key_send=key_s2c,
+        key_recv=key_c2s,
+        direction_send=1,
+        direction_recv=0,
+        sequence_state=session,
+    )
+    session["admin"] = admin
+    return session, admin
+
+
+async def register_session(
+    client_id: bytes,
+    session: dict,
+    session_store: dict[bytes, dict],
+    session_lock: asyncio.Lock,
+    peer: object,
+) -> None:
+    """Install a session and send its confirmation and initial peer list."""
+    async with session_lock:
+        previous = session_store.get(client_id)
+        if previous is not None:
+            # Replacing the map entry first prevents the old handler from
+            # removing this new session in its finally block.
+            previous["writer"].close()
+            logger.info("sessão substituída: client_id=%s", client_id.hex())
+        session_store[client_id] = session
+        logger.info("handshake autenticado: client_id=%s peer=%s", client_id.hex(), peer)
+
+        # Keep registration and initial sends atomic: REGISTERED must use seq 0.
+        await session["admin"].send_admin(REGISTERED, b"Registro confirmado")
+        for peer_id, peer_session in tuple(session_store.items()):
+            if peer_id == client_id:
+                continue
+            await session["admin"].send_admin(
+                PEER_INFO,
+                encode_peer_info(peer_id, peer_session["public_key"], peer_session["salt"]),
+            )
+            await peer_session["admin"].send_admin(
+                PEER_INFO,
+                encode_peer_info(client_id, session["public_key"], session["salt"]),
+            )
+
+
+async def relay_client_messages(
+    reader: StreamReader,
+    client_id: bytes,
+    admin: AdminChannel,
+    session_store: dict[bytes, dict],
+    session_lock: asyncio.Lock,
+) -> None:
+    """Receive E2E frames from one client and relay them unchanged."""
+    while True:
+        message_type, payload = await recv_frame(reader)
+        if message_type != E2E:
+            raise FrameError(f"unexpected client frame type 0x{message_type:02x}")
+        await relay_e2e_frame(client_id, payload, admin, session_store, session_lock)
+
+
+async def cleanup_client_session(
+    writer: StreamWriter,
+    client_id: bytes | None,
+    session: dict | None,
+    session_store: dict[bytes, dict],
+    session_lock: asyncio.Lock,
+) -> None:
+    """Close a connection and remove/announce its session if still current."""
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except (ConnectionError, OSError):
+        pass
+
+    if client_id is None:
+        return
+    async with session_lock:
+        current = session_store.get(client_id)
+        if current is session:
+            session_store.pop(client_id, None)
+            logger.info("desconexão: client_id=%s", client_id.hex())
+            for peer_id, peer_session in tuple(session_store.items()):
+                try:
+                    await peer_session["admin"].send_admin(
+                        PEER_LEFT, encode_peer_left(client_id)
+                    )
+                except (ConnectionError, OSError):
+                    logger.info("falha ao notificar saída: client_id=%s", peer_id.hex())
+
+
 async def handle_handshake_client(
     reader: StreamReader,
     writer: StreamWriter,
@@ -210,97 +324,31 @@ async def handle_handshake_client(
                 return
         server_handshake = await perform_server_handshake(reader, writer, signing_key, certificate_der)
         handshake_client_id = server_handshake.client_id
-        shared_secret = ecdh(server_handshake.server_private_key, server_handshake.client_public_key)
-        key_c2s = hkdf_extract_expand(server_handshake.salt_srv, shared_secret, b"C2S")
-        key_s2c = hkdf_extract_expand(server_handshake.salt_srv, shared_secret, b"S2C")
-        del shared_secret
-
-        session = {
-            "writer": writer,
-            "public_key": server_handshake.client_public_key,
-            "salt": server_handshake.salt_srv,
-            "seq_send": 0,
-            "seq_recv": -1,
-        }
-        admin = AdminChannel(
-            reader,
-            writer,
-            key_send=key_s2c,
-            key_recv=key_c2s,
-            direction_send=1,
-            direction_recv=0,
-            sequence_state=session,
-        )
-        session["admin"] = admin
+        session, admin = establish_admin_session(reader, writer, server_handshake)
         # The server ephemeral private key is no longer needed after deriving
         # the administrative keys; keep only the connection state and keys.
         server_handshake = None
-        async with active_lock:
-            previous = active_sessions.get(handshake_client_id)
-            if previous is not None:
-                # Replacing the map entry first makes the old handler's finally
-                # block unable to remove the new authenticated session.
-                previous["writer"].close()
-                logger.info("sessão substituída: client_id=%s", handshake_client_id.hex())
-            active_sessions[handshake_client_id] = session
-            logger.info("handshake autenticado: client_id=%s peer=%s", handshake_client_id.hex(), peer)
-            # Keep registration and initial sends atomic with respect to other
-            # arrivals so the registration confirmation is always seq 0.
-            await admin.send_admin(REGISTERED, b"Registro confirmado")
-            # The new client learns about each existing session, and each
-            # existing client learns about the new one. AdminChannel serializes
-            # sequence allocation and writes for each connection.
-            for peer_id, peer_session in tuple(active_sessions.items()):
-                if peer_id == handshake_client_id:
-                    continue
-                await admin.send_admin(
-                    PEER_INFO,
-                    encode_peer_info(peer_id, peer_session["public_key"], peer_session["salt"]),
-                )
-                await peer_session["admin"].send_admin(
-                    PEER_INFO,
-                    encode_peer_info(
-                        handshake_client_id,
-                        session["public_key"],
-                        session["salt"],
-                    ),
-                )
-        while True:
-            message_type, payload = await recv_frame(reader)
-            if message_type != E2E:
-                raise FrameError(f"unexpected client frame type 0x{message_type:02x}")
-            await relay_e2e_frame(
-                handshake_client_id,
-                payload,
-                admin,
-                active_sessions,
-                active_lock,
-            )
-    except (IncompleteReadError, FrameError, HandshakeError, InvalidKey, OSError) as exc:
+        await register_session(handshake_client_id, session, active_sessions, active_lock, peer)
+        await relay_client_messages(reader, handshake_client_id, admin, active_sessions, active_lock)
+    except IncompleteReadError as exc:
+        if _is_clean_frame_eof(exc):
+            if handshake_client_id is None:
+                logger.info("conexão encerrada antes do HELLO: peer=%s", peer)
+            # Once registered, cleanup_client_session logs the normal disconnect.
+        else:
+            logger.info("conexão encerrada com frame truncado: peer=%s", peer)
+    except (FrameError, HandshakeError, InvalidKey, OSError) as exc:
         logger.info("handshake rejeitado (%s): peer=%s", exc, peer)
     except (TypeError, ValueError) as exc:
         logger.info("handshake rejeitado (%s): peer=%s", exc, peer)
     finally:
-        writer.close()
         try:
-            await writer.wait_closed()
-        except (ConnectionError, OSError):
-            pass
-        if handshake_client_id is not None:
-            async with active_lock:
-                current = active_sessions.get(handshake_client_id)
-                if current is session:
-                    active_sessions.pop(handshake_client_id, None)
-                    logger.info("desconexão: client_id=%s", handshake_client_id.hex())
-                    for peer_id, peer_session in tuple(active_sessions.items()):
-                        try:
-                            await peer_session["admin"].send_admin(
-                                PEER_LEFT, encode_peer_left(handshake_client_id)
-                            )
-                        except (ConnectionError, OSError):
-                            logger.info("falha ao notificar saída: client_id=%s", peer_id.hex())
-        if limiter_acquired and connection_limiter is not None:
-            await connection_limiter.release()
+            await cleanup_client_session(
+                writer, handshake_client_id, session, active_sessions, active_lock
+            )
+        finally:
+            if limiter_acquired and connection_limiter is not None:
+                await connection_limiter.release()
 
 
 async def serve(

@@ -248,6 +248,35 @@ class RendezvousTests(unittest.IsolatedAsyncioTestCase):
         await limiter.release()
         self.assertEqual(limiter.active, 0)
 
+    async def test_accepted_connection_releases_limiter_on_disconnect(self):
+        limiter = ConnectionLimiter(1)
+        client = await self.connect_client(limiter=limiter)
+        self.assertEqual(limiter.active, 1)
+
+        client[2].close()
+        await client[3]
+
+        self.assertEqual(limiter.active, 0)
+
+    async def test_clean_eof_before_hello_is_not_logged_as_rejected_handshake(self):
+        server_reader = asyncio.StreamReader()
+        server_reader.feed_eof()
+        writer = MemoryWriter(asyncio.StreamReader())
+
+        with self.assertLogs("tp3.handshake_server", level="INFO") as captured:
+            await handle_handshake_client(
+                server_reader,
+                writer,
+                self.signing_key,
+                self.certificate,
+                self.sessions,
+                self.lock,
+            )
+
+        log_text = "\n".join(captured.output)
+        self.assertIn("conexão encerrada antes do HELLO", log_text)
+        self.assertNotIn("handshake rejeitado", log_text)
+
     async def test_server_logs_do_not_contain_peer_key_or_salt(self):
         with self.assertLogs("tp3.handshake_server", level="INFO") as captured:
             client = await self.connect_client()
@@ -256,6 +285,8 @@ class RendezvousTests(unittest.IsolatedAsyncioTestCase):
             await client[3]
         log_text = "\n".join(captured.output)
         self.assertIn(handshake.client_id.hex(), log_text)
+        self.assertIn("desconexão:", log_text)
+        self.assertNotIn("handshake rejeitado", log_text)
         self.assertNotIn(handshake.public_key.hex(), log_text)
         self.assertNotIn(handshake.salt_srv.hex(), log_text)
 
