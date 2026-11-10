@@ -33,8 +33,8 @@ sequenceDiagram
     else Servidor autenticado
         C->>C: Z_CS = ECDH(sk_C, pk_S)
         C->>C: HKDF-SHA256 deriva C2S e S2C
-        S->>S: Registra sessão e contadores administrativos
         S->>S: Z_CS = ECDH(sk_S, pk_C), deriva C2S e S2C
+        S->>S: Registra sessão e contadores administrativos
         S->>F: REGISTERED de confirmação cifrado com AES-128-GCM, seq=0
         F->>C: Frame administrativo autenticado
         C->>C: Decifra e autentica a confirmação
